@@ -98,15 +98,10 @@ void lexTriangulation(double *x, struct TriangulationResult *res, const int n, c
         }
     }
 
-    std::cout << "Initial ScriptyH: \n";
-    printMatrix(d, d, res->scriptyH);
-    std::cout << "\n";
-
     // increment scriptyHLen to account for new data
     res->scriptyHLen += d*d;
 
     for (i = d; i < n; i++) {
-        std::cout << "i = " << i << ", num_hyperplanes: " << (res->scriptyHLen/d) << "\n";
         // extendTri(x, res, i, n, d);
         findNewHyp(x, res, i, n, d);
     }
@@ -306,9 +301,6 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     D = new double[n1*m]; // Maybe have this preallocated elsewhere in a handle struct/obj 
     dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, X, &lda, newHyp, &ldb, &beta, D, &ldc);
 
-    std::cout << "D: \n";
-    printMatrix(n1, m, D);
-
     // SVD Params
     A = new double[2*d*d];
     lda = m2;
@@ -372,9 +364,6 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     delete[] A;
     delete[] S;
     delete[] work;
-    
-    std::cout << "Number of unimportant hyperplanes: " << toRemove.size() << "\n";
-    std::cout << "\n\n";
 
     // Remove the rows found in above
     // TODO Speed up the shifting

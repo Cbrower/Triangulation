@@ -7,6 +7,7 @@
 #include <numeric>
 
 #include "lexTri.hpp"
+#include "common.hpp"
 
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
@@ -107,6 +108,7 @@ void lexTriangulation(double *x, struct TriangulationResult *res, const int n, c
     }
 
     // TODO Lexicographically sort hyperplanes
+    lexSort(res->scriptyH, res->scriptyHLen/d, d);
 
     delete[] piv;
     delete[] lpckWspace;
@@ -277,6 +279,9 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
     len = 0;
     newHyp = new double[cap];
+    if (newHyp == nullptr) {
+        throw std::runtime_error("Unable to allocate space for new hyperplanes");
+    }
 
     // 2) Place the set builder notation elements from Theorem 7 of arXiv.0910.2845
     // into the newHyp array TODO Parallelize
@@ -304,7 +309,7 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     // SVD Params
     A = new double[2*d*d];
     lda = m2;
-    S = new double[m2]; // At the end we will have m1 = n1
+    S = new double[m2]; // At the end we will have m2 = n2
     work = new double[5*d];
 
     // Find rows that do not have at least d-1 zeros or do not contain points that live in 
@@ -317,12 +322,12 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
             if (fabs(D[i*m + j]) < TOLERANCE) {
                 if (count >= rowsA) {
                     // Increase the size of A and copy data over
-                    rowsA *= 2;
-                    tmpA = new double[rowsA*d];
+                    tmpA = new double[2*rowsA*d];
                     
                     for (k = 0; k < d*rowsA; k++) {
                         tmpA[k] = A[k];
                     }
+                    rowsA *= 2;
 
                     delete[] A;
                     A = tmpA;
@@ -348,7 +353,7 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
         dgesvd_(&jobu, &jobvt, &m2, &n2, A, &lda, S, U, &ldu, VT, &ldvt, work, &lwork, &info);
 
         numSVals = 0;
-        for (k = 0; k < n2; k++) {
+        for (k = 0; k < min; k++) {
             if (fabs(S[k]) > TOLERANCE) {
                 numSVals += 1;
             }

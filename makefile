@@ -3,7 +3,7 @@ COMMON = common
 CC = g++
 CFLAGS = -g -O3
 
-${PROGRAM}:	${PROGRAM}.o ${COMMON}.o main.cpp
+${PROGRAM}:	${COMMON}.o ${PROGRAM}.o main.cpp
 	${CC} ${CFLAGS} main.cpp ${PROGRAM}.o ${COMMON}.o -llapack -lblas -lpthread -o ${PROGRAM}
 
 ${PROGRAM}.o:	${PROGRAM}.cpp ${PROGRAM}.hpp

@@ -5,8 +5,9 @@
 #include <algorithm>
 #include <iterator>
 #include <numeric>
+#include <cuda_runtime.h>
 
-#include "lexTri.hpp"
+#include "lexTriangulator.hpp"
 #include "common.hpp"
 
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
@@ -30,64 +31,69 @@ extern "C" {
                     int* info);
 }
 
-
-// Define Helper functions
-void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n, const int d);
-void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int n, const int d);
+// Helper Functions
 int gcd(int a, int b);
 
-void lexTriangulation(double *x, struct TriangulationResult *res, const int n, const int d) {
+void LexTriangulator::computeTri() {
     int i;
     int j;
     // scriptyH computation variables
-    int dCopy;
     int lwspace;
     int error;
     int *piv;
     double det;
-    double norm;
     double *lpckWspace;
-
-    dCopy = d; // Neede b/c a const int d cannot be converted to int*
-
-    if (n < d) {
-        throw std::runtime_error("not enough elements in 'x'");
-    }
+    unsigned int flags;
 
     // setup initial values
     lwspace = d*d;
 
     // Allocate memory
-    piv = new int[d];
     lpckWspace = new double[lwspace];
+    // -- Allocate mem handle memory
+    lenA = 2*d*d;
+    A = new double[lenA];
+    lenC = n*n;
+    C = new double[lenC];
+    lenD = n*n;
+    D = new double[lenD];
+    lenHyp = n*n;
+    newHyp = new double[lenHyp]; // Currently not being used
+    lenS = d;
+    S = new double[lenS];
+    lenWork = 5*d;
+    work = new double[lenWork];
+    piv = new int[d];
 
-    res->d = d;
-    res->scriptyHCap = d*n; // Starting size of scriptyH
-    res->scriptyHLen = 0;
-    res->scriptyH = new double[res->scriptyHCap];
+    scriptyHCap = d*n; // Starting size of scriptyH
+    scriptyHLen = 0;
+    // Allocate Zero Copy Memory TODO use preprocessor commands to make CUDA optional
+    // scriptyH = new double[scriptyHCap];
+    flags = cudaHostAllocMapped;
+    cudaHostAlloc((void **)&scriptyH, scriptyHCap*sizeof(double), flags);
 
     for (i = 0; i < d; i++) {
-        res->delta.push_back(i);
+        delta.push_back(i);
         for (j = 0; j < d; j++) {
-            res->scriptyH[j*d + i] = x[i*d + j];
+            scriptyH[j*d + i] = x[i*d + j];
         }
     
     }
 
-    dgetrf_(&dCopy, &dCopy, res->scriptyH, &dCopy, piv, &error);
+    dgetrf_(&d, &d, scriptyH, &d, piv, &error);
     if (error != 0) {
-        throw std::runtime_error("Error in degtrf");
+        throw std::runtime_error("Error in dgetrf");
     }
 
     det = 1;
     for (i = 0; i < d; i++) {
-        det *= res->scriptyH[i*d + i];
+        det *= scriptyH[i*d + i];
         if (piv[i] != i+1) {
             det *= -1;
         }
     }
 
-    dgetri_(&dCopy, res->scriptyH, &dCopy, piv, lpckWspace, &lwspace, &error);
+    dgetri_(&d, scriptyH, &d, piv, lpckWspace, &lwspace, &error);
     if (error != 0) {
         throw std::runtime_error("Error in dgetri");
     }
@@ -95,26 +101,42 @@ void lexTriangulation(double *x, struct TriangulationResult *res, const int n, c
     // Scaling the rows of scriptyH
     for (i = 0; i < d; i++) {
         for (j = 0; j < d; j++) {
-            res->scriptyH[i*d + j] *= det;
+            scriptyH[i*d + j] *= det;
         }
     }
 
     // increment scriptyHLen to account for new data
-    res->scriptyHLen += d*d;
+    scriptyHLen += d*d;
 
     for (i = d; i < n; i++) {
-        // extendTri(x, res, i, n, d);
-        findNewHyp(x, res, i, n, d);
+        // extendTri(i);
+        findNewHyp(i);
     }
 
-    // TODO Lexicographically sort hyperplanes
-    lexSort(res->scriptyH, res->scriptyHLen/d, d);
+    lexSort(scriptyH, scriptyHLen/d, d);
 
+    computedTri = true;
+
+    // Free memory
     delete[] piv;
     delete[] lpckWspace;
+    delete[] A;
+    delete[] C;
+    delete[] D;
+    delete[] newHyp;
+    delete[] S;
+    delete[] work;
+
+    // Set lengths to zero
+    lenA = 0;
+    lenC = 0;
+    lenD = 0;
+    lenHyp = 0;
+    lenS = 0;
+    lenWork = 0;
 }
 
-void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n, const int d) {
+void LexTriangulator::extendTri(int yInd) {
     // common
     std::vector<int> indTracker;
     int m;
@@ -139,7 +161,7 @@ void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n
     // Setting values for the \mathcal{H}^<(y) computation
     trans = 'T';
     m = d;
-    n1 = res->scriptyHLen/d;
+    n1 = scriptyHLen/d;
     alpha = 1.0;
     lda = m;
     incx = 1;    
@@ -147,25 +169,25 @@ void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n
     p = new double[n];
     incy = 1;
 
-    dgemv_(&trans, &m, &n1, &alpha, res->scriptyH, &lda, &(X[yInd*d]), &incx, &beta, p, &incy);
+    dgemv_(&trans, &m, &n1, &alpha, scriptyH, &lda, &(x[yInd*d]), &incx, &beta, p, &incy);
 
     // setting values for the computation of \sigma \cap H
     transA = 'T';
     transB = 'N';
     m = yInd+1;
-    n1 = res->scriptyHLen/d;
+    n1 = scriptyHLen/d;
     k = d;
     lda = k;
     ldb = k;
     C = new double[n1*m];
     ldc = m;
 
-    dgemm_(&transA, &transB, &m, &n1, &k, &alpha, X, &lda, res->scriptyH, &ldb, &beta, C, &ldc);
+    dgemm_(&transA, &transB, &m, &n1, &k, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
 
     // Can be parallelized
-    int oDeltaLen = res->delta.size()/d;
+    int oDeltaLen = delta.size()/d;
     indTracker.reserve(d);
-    for (int ih = 0;  ih < res->scriptyHLen/d; ih++) {
+    for (int ih = 0;  ih < scriptyHLen/d; ih++) {
         if (p[ih] > -TOLERANCE) {
             continue;
         }
@@ -173,17 +195,17 @@ void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n
         for (int id = 0; id < oDeltaLen; id++) {
             indTracker.clear();
             for (int is = 0; is < d; is++) {
-                if (fabs(C[ih*m + res->delta[id*d + is]]) < TOLERANCE) {
-                    indTracker.push_back(res->delta[id*d + is]);
+                if (fabs(C[ih*m + delta[id*d + is]]) < TOLERANCE) {
+                    indTracker.push_back(delta[id*d + is]);
                 }
             }
 
             if ((int)indTracker.size() == d - 1) {
                 // TODO Use STL Functions
                 for (int i = 0; i < d - 1; i++) {
-                    res->delta.push_back(indTracker[i]);
+                    delta.push_back(indTracker[i]);
                 }
-                res->delta.push_back(yInd);
+                delta.push_back(yInd);
             }
         }
     }
@@ -192,13 +214,14 @@ void extendTri(double *X, struct TriangulationResult *res, int yInd, const int n
     delete[] C;
 }
 
-void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int n, const int d) {
+void LexTriangulator::findNewHyp(int yInd) {
     std::vector<int> sP;
     std::vector<int> sN;
     std::vector<int> sL;
     int i;
     int j;
     int k;
+    int scale;
     char transA;
     char transB;
     int m;
@@ -206,16 +229,16 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     int k1;
     int lda;
     int ldb;
-    double *C;
     int ldc;
     double alpha;
     double beta;
     // For New Hyperplanes
     int cap;
     int len;
+    double lambda_i;
+    double lambda_j;
     double *newHyp;
     // For filtering new hyperplanes
-    double *D;
     int count;
     std::vector<int> toRemove; 
     // SVD for filtering new hyperplanes
@@ -224,28 +247,32 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     int m2;
     int n2;
     int min;
-    double *A;
     double *tmpA;
     int rowsA; // The number of rows A can have
-    double* S;
     double* U;
     int ldu;
     double* VT;
     int ldvt;
     int lwork;
-    double* work;
     int info;
     int numSVals;
+    // For CUDA
+    unsigned int flags;
 
     // For dgemm
     transA = 'T';
     transB = 'N';
     m = yInd+1;
-    n1 = res->scriptyHLen/d;
+    n1 = scriptyHLen/d;
     k1 = d;
     lda = k1;
     ldb = k1;
-    C = new double[n1*m];
+    if (n1*m > lenC) {
+        scale = (int)(n1*m/lenC) + 1;
+        delete[] C;
+        lenC *= scale;
+        C = new double[lenC];
+    }
     ldc = m;
     alpha = 1.0;
     beta = 0.0;
@@ -254,16 +281,15 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     jobu  = 'N';
     jobvt = 'N';
     m2 = d;
-    rowsA = 2*d;
+    rowsA = lenA/d;
     ldu = m2;
     ldvt = m2;
-    lwork = 5*min;
     U = nullptr;
     VT = nullptr;
 
     // TODO do the MM product outside of this function and extendTri function and use it commonly
     // for both
-    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, X, &lda, res->scriptyH, &ldb, &beta, C, &ldc);
+    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
 
     for (i = 0; i < n1; i++) {
         if (fabs(C[i*m + yInd]) < TOLERANCE) {
@@ -278,39 +304,46 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     // 1) Allocate enough memory for our new forms
     cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
     len = 0;
-    newHyp = new double[cap];
+
+    // Allocate Zero Copy Memory TODO use preprocessor commands to make CUDA optional
+    // newHyp = new double[cap];
+    flags = cudaHostAllocMapped;
+    cudaHostAlloc((void **)&newHyp, cap*sizeof(double), flags);
     if (newHyp == nullptr) {
         throw std::runtime_error("Unable to allocate space for new hyperplanes");
     }
 
-    // 2) Place the set builder notation elements from Theorem 7 of arXiv.0910.2845
+    // 2) Place the set builder notation elements from Theorem 7 of arxiv.0910.2845
     // into the newHyp array TODO Parallelize
-    // TODO take gcd of row and divide through by that.  If this is not done,
-    // Every time fourier motzkin is called, the scaling of the hyperplanes will
-    // increase substantially.
-    // Other option is just to use normalized vectors from the beginnning and never scale
-    // and then normalize these vectors after
     for (i = 0; i < (int)sP.size(); i++) {
+        lambda_i = C[sP[i]*m + yInd];
         for (j = 0; j < (int)sN.size(); j++) {
+            lambda_j = C[sN[j]*m + yInd];
             for (k = 0; k < d; k++) {
-                newHyp[len + k] = C[sP[i]*m + yInd] * res->scriptyH[sN[j]*d + k] -
-                                        C[sN[j]*m + yInd] * res->scriptyH[sP[i]*d + k];
+                newHyp[len + k] = lambda_i * scriptyH[sN[j]*d + k] -
+                                        lambda_j * scriptyH[sP[i]*d + k];
             }
             len += d;
         }
     }
 
-    // Remove Hyperplanes that do not have at least d-1 elements of X touching them
+    // Remove Hyperplanes that do not have at least d-1 elements of x touching them
     // First, do a matrix matrix product of newHyp and 
     n1 = len/d;
-    D = new double[n1*m]; // Maybe have this preallocated elsewhere in a handle struct/obj 
-    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, X, &lda, newHyp, &ldb, &beta, D, &ldc);
+    if (n1*m > lenD) {
+        scale = (int)(n1*m/lenD) + 1; // TODO analyze and see if we want more than +1
+        delete[] D;
+        lenD *= scale;
+        D = new double[lenD];
+    }
+    D = D;
+    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, D, &ldc);
 
     // SVD Params
-    A = new double[2*d*d];
+    A = A; // new double[2*d*d];
     lda = m2;
-    S = new double[m2]; // At the end we will have m2 = n2
-    work = new double[5*d];
+    S = S;
+    work = work; // new double[5*d];
 
     // Find rows that do not have at least d-1 zeros or do not contain points that live in 
     // d-1 dimensional space.  The first is easy to check, the latter is done via svd
@@ -324,18 +357,15 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
                     // Increase the size of A and copy data over
                     tmpA = new double[2*rowsA*d];
                     
-                    for (k = 0; k < d*rowsA; k++) {
-                        tmpA[k] = A[k];
-                    }
+                    std::copy(A, A+rowsA*d, tmpA);
                     rowsA *= 2;
 
                     delete[] A;
                     A = tmpA;
+                    A = tmpA;
                     tmpA = nullptr;
                 }
-                for (k = 0; k < d; k++) {
-                    A[count*d + k] = X[j*d + k];
-                }
+                std::copy(x+j*d, x+(j+1)*d, A+count*d); 
                 count += 1;
             }
         }
@@ -365,11 +395,6 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
         }
     }
 
-    // Free SVD memory
-    delete[] A;
-    delete[] S;
-    delete[] work;
-
     // Remove the rows found in above
     // TODO Speed up the shifting
     for (i = 0; i < (int) toRemove.size(); i++) {
@@ -383,14 +408,14 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     // 3) Add in the sP and sL
     for (i = 0; i < (int)sP.size(); i++) {
         for (int j = 0; j < d; j++) {
-            newHyp[len + j] = res->scriptyH[sP[i]*d + j];
+            newHyp[len + j] = scriptyH[sP[i]*d + j];
         }
         len += d;
     }
 
     for (i = 0; i < (int)sL.size(); i++) {
         for (int j = 0; j < d; j++) {
-            newHyp[len + j] = res->scriptyH[sL[i]*d + j];
+            newHyp[len + j] = scriptyH[sL[i]*d + j];
         }
         len += d;
     }
@@ -410,14 +435,10 @@ void findNewHyp(double *X, struct TriangulationResult *res, int yInd, const int 
     }
 
     // Free old scriptyH and replace
-    delete[] res->scriptyH;
-    res->scriptyH = newHyp;
-    res->scriptyHLen = len;
-    res->scriptyHCap = cap;
-
-    // free memory
-    delete[] C;
-    delete[] D;
+    cudaFreeHost(scriptyH);
+    scriptyH = newHyp;
+    scriptyHLen = len;
+    scriptyHCap = cap;
 }
 
 int gcd(int a, int b) {
@@ -429,4 +450,3 @@ int gcd(int a, int b) {
     }
     return a;
 }
-

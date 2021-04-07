@@ -4,14 +4,15 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <sys/time.h>
+#include <cuda_runtime.h>
 
-#include "lexTri.hpp"
+#include "lexTriangulator.hpp"
 #include "common.hpp"
 
 void readFile(const char* filename, std::vector<double> &x, int *d) {
     int fcount; // first count
     int count;
-    bool hasInputStarted;
     double tmp;
     std::string line;
     std::string word;
@@ -19,7 +20,6 @@ void readFile(const char* filename, std::vector<double> &x, int *d) {
     std::ifstream infile(filename);
 
     fcount = -1;
-    hasInputStarted = false;
 
     while (std::getline(infile, line)) {
         std::istringstream iss(line);
@@ -57,9 +57,11 @@ void readFile(const char* filename, std::vector<double> &x, int *d) {
 int main(int argc, char** argv) {
     int n;
     int d;
+    double elaps;
     char *filename;
     std::vector<double> x;
-    struct TriangulationResult *res = new TriangulationResult();
+    struct timeval start, end;
+    LexTriangulator *tri;
 
     if (argc > 1) {
         filename = argv[1];
@@ -76,17 +78,25 @@ int main(int argc, char** argv) {
     // Sort for linear independence
     sortForLinIndependence(x.data(), n, d);
 
-    lexTriangulation(x.data(), res, n, d); // TODO May not want to use vector here
+    gettimeofday(&start, NULL);
+    tri = new LexTriangulator(x.data(), n, d);
+    tri->computeTri();
+    gettimeofday(&end, NULL);
+
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
 
     std::cout << "X:\n";
     printMatrix(n, d, x.data());
 
-    std::cout << "\n" << (res->scriptyHLen/d) << " support hyperplanes:\n";
-    printMatrix(res->scriptyHLen/d, d, res->scriptyH);
+    std::cout << "\n" << tri->getNumSupHyperplanes() << " support hyperplanes:\n";
+    printMatrix(tri->getNumSupHyperplanes(), d, tri->getSupportingHyperplanes());
 
     std::cout << "\ndelta: \n";
-    printMatrix(res->delta.size()/d, d, res->delta.data());
+    printMatrix(tri->getTriangulations().size()/d, d, tri->getTriangulations().data());
 
-    delete[] res->scriptyH;
-    delete res;
+    std::cout << "Time to compute: " << elaps << " seconds.\n";
+
+    delete tri;
+
+    cudaDeviceReset();
 }

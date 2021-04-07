@@ -1,8 +1,10 @@
 #ifndef _COMMON_HPP
 #define _COMMON_HPP
 
-#include <vector>
 #include <algorithm>
+#include <iostream>
+#include <iomanip>
+#include <vector>
 
 int sortForLinIndependence(double *scriptyH, const int n, const int d);
 void sortForL1Norm(double* scriptyH, const int n, const int d);
@@ -24,20 +26,16 @@ void lexSort(T* x, const int n, const int d) {
             x[i*d + j] = vec[i][j];
         } 
     }
-    
-    /*
-    auto cmpFunc = [](T* x1, T* x2) {
-        int i;
-        for (i = 0; i < d; i++) {
-            if (x1[i] < x2[i]) {
-                return true;
-            } else if (x1[i] > x2[i]) {
-                return false;
-            }
+}
+
+template<typename T>
+void printMatrix(int m, int n, T* A) {
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            std::cout << std::setfill(' ') << std::setw(3) << A[i*n + j] << " ";
         }
-        return false;
+        std::cout << "\n";
     }
-    */
 }
 
 #endif // _COMMON_HPP

@@ -1,2 +1,6 @@
 lexTri
 *.o
+gmon.out
+massif.out*
+build
+build/*

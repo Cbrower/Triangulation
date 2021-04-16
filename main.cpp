@@ -5,7 +5,10 @@
 #include <vector>
 #include <stdexcept>
 #include <sys/time.h>
-#include <cuda_runtime.h>
+
+#if USE_CUDA == 1
+    #include <cuda_runtime.h>
+#endif
 
 #include "lexTriangulator.hpp"
 #include "common.hpp"
@@ -57,6 +60,7 @@ void readFile(const char* filename, std::vector<double> &x, int *d) {
 int main(int argc, char** argv) {
     int n;
     int d;
+    int numThreads;
     double elaps;
     char *filename;
     std::vector<double> x;
@@ -71,6 +75,11 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
+    if (argc > 2) {
+        numThreads = atoi(argv[2]);
+    } else {
+        numThreads = 1;
+    }
 
     n = x.size()/d;
     std::cout << "d: " << d << ", n: " << n << "\n";
@@ -80,6 +89,7 @@ int main(int argc, char** argv) {
 
     gettimeofday(&start, NULL);
     tri = new LexTriangulator(x.data(), n, d);
+    tri->setNumberOfThreads(numThreads);
     tri->computeTri();
     gettimeofday(&end, NULL);
 
@@ -98,5 +108,7 @@ int main(int argc, char** argv) {
 
     delete tri;
 
+#if USE_CUDA == 1
     cudaDeviceReset();
+#endif
 }

@@ -1,6 +1,10 @@
 #ifndef _LEXTRIANGULATOR_HPP
 #define _LEXTRIANGULATOR_HPP
 
+#if USE_CUDA == 1
+    #include <cuda_runtime.h>
+#endif
+
 #include "triangulator.hpp"
 
 class LexTriangulator : public Triangulator {
@@ -9,7 +13,11 @@ class LexTriangulator : public Triangulator {
             // nothing on purpose
         }
         ~LexTriangulator() { 
+#if USE_CUDA == 1
             cudaFreeHost(scriptyH);
+#else
+            delete[] scriptyH;
+#endif
         }
         void computeTri() override;
     protected:

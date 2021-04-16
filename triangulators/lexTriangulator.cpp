@@ -5,7 +5,14 @@
 #include <algorithm>
 #include <iterator>
 #include <numeric>
-#include <cuda_runtime.h>
+#include <sys/time.h>
+
+#if USE_CUDA == 1
+    #include <cublas_v2.h>
+#endif
+#if USE_OPENMP == 1
+    #include <omp.h>
+#endif
 
 #include "lexTriangulator.hpp"
 #include "common.hpp"
@@ -43,7 +50,16 @@ void LexTriangulator::computeTri() {
     int *piv;
     double det;
     double *lpckWspace;
+#if USE_CUDA == 1
+    cublasStatus_t status;
+    cublasHandle_t handle;
     unsigned int flags;
+    int dev = 0; // TODO Remove hardcoding
+#endif
+
+#if USE_OPENMP == 1
+    std::cout << "Using OpenMP with " << numThreads << " thread(s)!\n";
+#endif
 
     // setup initial values
     lwspace = d*d;
@@ -67,10 +83,20 @@ void LexTriangulator::computeTri() {
 
     scriptyHCap = d*n; // Starting size of scriptyH
     scriptyHLen = 0;
-    // Allocate Zero Copy Memory TODO use preprocessor commands to make CUDA optional
-    // scriptyH = new double[scriptyHCap];
+#if USE_CUDA == 1
+    // Allocate Zero Copy Memory
     flags = cudaHostAllocMapped;
     cudaHostAlloc((void **)&scriptyH, scriptyHCap*sizeof(double), flags);
+
+    // Create a cublas handle
+    status = cublasCreate(&handle);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        // TODO raise excpetion or print error and don't use cublas
+    }
+#else
+    scriptyH = new double[scriptyHCap];
+#endif
 
     for (i = 0; i < d; i++) {
         delta.push_back(i);
@@ -126,6 +152,14 @@ void LexTriangulator::computeTri() {
     delete[] newHyp;
     delete[] S;
     delete[] work;
+
+#if USE_CUDA == 1
+    status = cublasDestroy(handle);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        // TODO print error and raise exception
+    }
+#endif
 
     // Set lengths to zero
     lenA = 0;
@@ -238,6 +272,7 @@ void LexTriangulator::findNewHyp(int yInd) {
     double lambda_i;
     double lambda_j;
     double *newHyp;
+    double *newHyp2;
     // For filtering new hyperplanes
     int count;
     std::vector<int> toRemove; 
@@ -256,8 +291,15 @@ void LexTriangulator::findNewHyp(int yInd) {
     int lwork;
     int info;
     int numSVals;
+#if USE_CUDA == 1
     // For CUDA
     unsigned int flags;
+#endif
+#if DO_TIMING == 1
+    // For timing
+    double elaps;
+    struct timeval start, end;
+#endif
 
     // For dgemm
     transA = 'T';
@@ -289,7 +331,16 @@ void LexTriangulator::findNewHyp(int yInd) {
 
     // TODO do the MM product outside of this function and extendTri function and use it commonly
     // for both
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
     dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds for first MM product.\n";
+#endif
+
 
     for (i = 0; i < n1; i++) {
         if (fabs(C[i*m + yInd]) < TOLERANCE) {
@@ -305,27 +356,50 @@ void LexTriangulator::findNewHyp(int yInd) {
     cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
     len = 0;
 
-    // Allocate Zero Copy Memory TODO use preprocessor commands to make CUDA optional
+#if USE_CUDA == 1
+    // Allocate Zero Copy Memory
     // newHyp = new double[cap];
     flags = cudaHostAllocMapped;
     cudaHostAlloc((void **)&newHyp, cap*sizeof(double), flags);
     if (newHyp == nullptr) {
-        throw std::runtime_error("Unable to allocate space for new hyperplanes");
+        throw std::runtime_error("Unable to allocate space for new hyperplanes:0");
     }
 
+    cudaHostAlloc((void **)&newHyp2, cap*sizeof(double), flags);
+    if (newHyp2 == nullptr) {
+        throw std::runtime_error("Unable to allocate space for new hyperplanes:1");
+    }
+#else
+    newHyp = new double[cap];
+    newHyp2 = new double[cap];
+#endif
+
     // 2) Place the set builder notation elements from Theorem 7 of arxiv.0910.2845
-    // into the newHyp array TODO Parallelize
+    // into the newHyp array TODO Parallelize with CUDA
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j, k, lambda_i, lambda_j)
+#endif
     for (i = 0; i < (int)sP.size(); i++) {
         lambda_i = C[sP[i]*m + yInd];
+        int tmpLen = i*d*sN.size();
         for (j = 0; j < (int)sN.size(); j++) {
             lambda_j = C[sN[j]*m + yInd];
             for (k = 0; k < d; k++) {
-                newHyp[len + k] = lambda_i * scriptyH[sN[j]*d + k] -
+                newHyp[tmpLen + j*d + k] = lambda_i * scriptyH[sN[j]*d + k] -
                                         lambda_j * scriptyH[sP[i]*d + k];
             }
-            len += d;
         }
     }
+    len += sP.size()*sN.size()*d;
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds to compute Theorem 7 for " 
+                << (sP.size()*sN.size()) << " hyperplanes.\n";
+#endif
 
     // Remove Hyperplanes that do not have at least d-1 elements of x touching them
     // First, do a matrix matrix product of newHyp and 
@@ -336,19 +410,27 @@ void LexTriangulator::findNewHyp(int yInd) {
         lenD *= scale;
         D = new double[lenD];
     }
-    D = D;
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
     dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, D, &ldc);
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds for second MM product.\n";
+#endif
 
     // SVD Params
-    A = A; // new double[2*d*d];
     lda = m2;
-    S = S;
     work = work; // new double[5*d];
 
     // Find rows that do not have at least d-1 zeros or do not contain points that live in 
     // d-1 dimensional space.  The first is easy to check, the latter is done via svd
     // TODO Determine if I should just always copy or copy afterwards if and only if we
     // have at least d-1 points
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
     for (i = 0; i < n1; i++) {
         count = 0;
         for (j = 0; j < m; j++) {
@@ -361,7 +443,6 @@ void LexTriangulator::findNewHyp(int yInd) {
                     rowsA *= 2;
 
                     delete[] A;
-                    A = tmpA;
                     A = tmpA;
                     tmpA = nullptr;
                 }
@@ -394,33 +475,79 @@ void LexTriangulator::findNewHyp(int yInd) {
             continue;
         }
     }
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds to reduce hyperplanes.\n";
+#endif
+
+    // sort toRemove for removing unimportant hyperplanes
+    std::sort(toRemove.begin(), toRemove.end());
 
     // Remove the rows found in above
-    // TODO Speed up the shifting
-    for (i = 0; i < (int) toRemove.size(); i++) {
-        for (j = (toRemove[i]-i)*d; j < len - d; j++) {
-            newHyp[j] = newHyp[j + d];
+    // TODO Make shifting more memory efficient if possible
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
+    int curIndex = 0;
+    int nLen = 0;
+    for (i = 0; i < n1; i++) {
+        if (curIndex < toRemove.size() && i == toRemove[curIndex]) {
+            curIndex += 1;
+            continue;
         }
-        len -= d;
+        for (j = 0; j < d; j++) {
+            newHyp2[nLen + j] = newHyp[i*d + j];
+        }
+        nLen += d;
     }
+
+#if USE_CUDA == 1
+    cudaFreeHost(newHyp);
+#else
+    delete[] newHyp;
+#endif
+
+    newHyp = newHyp2;
+    newHyp2 = nullptr;
+    len = nLen;
+
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds to remove hyperplanes.\n";
+#endif
 
 
     // 3) Add in the sP and sL
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
     for (i = 0; i < (int)sP.size(); i++) {
-        for (int j = 0; j < d; j++) {
-            newHyp[len + j] = scriptyH[sP[i]*d + j];
+        for (j = 0; j < d; j++) {
+            newHyp[len + i*d + j] = scriptyH[sP[i]*d + j];
         }
-        len += d;
     }
+    len += sP.size()*d;
 
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
     for (i = 0; i < (int)sL.size(); i++) {
-        for (int j = 0; j < d; j++) {
-            newHyp[len + j] = scriptyH[sL[i]*d + j];
+        for (j = 0; j < d; j++) {
+            newHyp[len + i*d + j] = scriptyH[sL[i]*d + j];
         }
-        len += d;
     }
+    len += sL.size()*d;
 
-    // 4) Reduce them by gcd TODO parallelize with omp
+
+    // 4) Reduce them by gcd TODO Check if a self defined reduction is faster
+#if DO_TIMING == 1
+    gettimeofday(&start, NULL);
+#endif
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
     for (i = 0; i < len/d; i++) {
         int listGCD = 0;
         for (j = 0; j < d; j++) {
@@ -433,9 +560,18 @@ void LexTriangulator::findNewHyp(int yInd) {
             newHyp[i*d + j] /= listGCD;
         }
     }
+#if DO_TIMING == 1
+    gettimeofday(&end, NULL);
+    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    std::cout << "Took " << elaps << " seconds to gcd reduce hyperplanes.\n\n";
+#endif
 
     // Free old scriptyH and replace
+#if USE_CUDA == 1
     cudaFreeHost(scriptyH);
+#else
+    delete[] scriptyH;
+#endif
     scriptyH = newHyp;
     scriptyHLen = len;
     scriptyHCap = cap;

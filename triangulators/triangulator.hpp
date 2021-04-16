@@ -31,6 +31,11 @@ class Triangulator {
         int getDimension() {
             return d;
         }
+        void setNumberOfThreads(int numThreads) {
+            if (numThreads > 0) {
+                this->numThreads = numThreads;
+            }
+        }
         virtual void computeTri() = 0;
         // TODO More invariants that can be computed by 
 
@@ -51,6 +56,7 @@ class Triangulator {
         int d;
         int scriptyHLen;
         int scriptyHCap;
+        int numThreads {1};
 };
 
 #endif // _TRIANGULATOR_HPP

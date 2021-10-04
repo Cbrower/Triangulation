@@ -7,15 +7,16 @@
 #include <numeric>
 #include <sys/time.h>
 
-#if USE_CUDA == 1
-    #include <cublas_v2.h>
-#endif
 #if USE_OPENMP == 1
     #include <omp.h>
 #endif
 
 #include "lexTriangulator.hpp"
 #include "common.hpp"
+
+#if USE_CUDA == 1
+    #include "cudaHelpers.hpp"
+#endif
 
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
@@ -28,14 +29,6 @@ extern "C" {
 
     // matrix vector product.  Note that this uses is in column major order
     void dgemv_(char* trans, int* m, int *n, double* alpha, double* A, int* lda, double* x, int* incx, double* beta, double* y, int* incy);
-
-    // matrix matrix product.  Once again, this is in column major order
-    void dgemm_(char* transA, char* transB, int* m, int* n, int* k, double* alpha, double* A, int* lda, double* B, int* ldb, double* beta, double* C, int* ldc);
-
-    // Singular Value Decomposition of a matrix.
-    void dgesvd_(char* jobu, char* jobvt, int* m, int* n, double* A, int* lda, double* S, 
-                    double* U, int* ldu, double* VT, int* ldvt, double* work, int* lwork,
-                    int* info);
 }
 
 // Helper Functions
@@ -52,7 +45,6 @@ void LexTriangulator::computeTri() {
     double *lpckWspace;
 #if USE_CUDA == 1
     cublasStatus_t status;
-    cublasHandle_t handle;
     unsigned int flags;
     int dev = 0; // TODO Remove hardcoding
 #endif
@@ -73,6 +65,9 @@ void LexTriangulator::computeTri() {
     C = new double[lenC];
     lenD = n*n;
     D = new double[lenD];
+#if USE_CUDA
+    cudaMalloc(reinterpret_cast<void **>(&d_D), sizeof(double)*lenD);
+#endif
     lenHyp = n*n;
     newHyp = new double[lenHyp]; // Currently not being used
     lenS = d;
@@ -87,13 +82,6 @@ void LexTriangulator::computeTri() {
     // Allocate Zero Copy Memory
     flags = cudaHostAllocMapped;
     cudaHostAlloc((void **)&scriptyH, scriptyHCap*sizeof(double), flags);
-
-    // Create a cublas handle
-    status = cublasCreate(&handle);
-
-    if (status != CUBLAS_STATUS_SUCCESS) {
-        // TODO raise excpetion or print error and don't use cublas
-    }
 #else
     scriptyH = new double[scriptyHCap];
 #endif
@@ -154,11 +142,7 @@ void LexTriangulator::computeTri() {
     delete[] work;
 
 #if USE_CUDA == 1
-    status = cublasDestroy(handle);
-
-    if (status != CUBLAS_STATUS_SUCCESS) {
-        // TODO print error and raise exception
-    }
+    cudaFree(d_D);
 #endif
 
     // Set lengths to zero
@@ -183,13 +167,9 @@ void LexTriangulator::extendTri(int yInd) {
     int incx;
     int incy;
     // for \sigma \cap H via matrix matrix product
-    char transA;
-    char transB;
     int n1;
     int k;
-    int ldb;
     double *C;
-    int ldc;
 
     // TODO remove unnecesary parameters and put things in terms of d, n, etc.
     // Setting values for the \mathcal{H}^<(y) computation
@@ -206,17 +186,12 @@ void LexTriangulator::extendTri(int yInd) {
     dgemv_(&trans, &m, &n1, &alpha, scriptyH, &lda, &(x[yInd*d]), &incx, &beta, p, &incy);
 
     // setting values for the computation of \sigma \cap H
-    transA = 'T';
-    transB = 'N';
     m = yInd+1;
     n1 = scriptyHLen/d;
     k = d;
-    lda = k;
-    ldb = k;
     C = new double[n1*m];
-    ldc = m;
 
-    dgemm_(&transA, &transB, &m, &n1, &k, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
+    cpuMatmul(x, scriptyH, C, m, n1, k, true, false);
 
     // Can be parallelized
     int oDeltaLen = delta.size()/d;
@@ -256,16 +231,9 @@ void LexTriangulator::findNewHyp(int yInd) {
     int j;
     int k;
     int scale;
-    char transA;
-    char transB;
     int m;
     int n1;
     int k1;
-    int lda;
-    int ldb;
-    int ldc;
-    double alpha;
-    double beta;
     // For New Hyperplanes
     int cap;
     int len;
@@ -277,22 +245,16 @@ void LexTriangulator::findNewHyp(int yInd) {
     int count;
     std::vector<int> toRemove; 
     // SVD for filtering new hyperplanes
-    char jobu;
-    char jobvt;
     int m2;
     int n2;
     int min;
     double *tmpA;
     int rowsA; // The number of rows A can have
-    double* U;
-    int ldu;
-    double* VT;
-    int ldvt;
     int lwork;
-    int info;
     int numSVals;
 #if USE_CUDA == 1
     // For CUDA
+    cublasStatus_t status;
     unsigned int flags;
 #endif
 #if DO_TIMING == 1
@@ -302,39 +264,27 @@ void LexTriangulator::findNewHyp(int yInd) {
 #endif
 
     // For dgemm
-    transA = 'T';
-    transB = 'N';
     m = yInd+1;
     n1 = scriptyHLen/d;
     k1 = d;
-    lda = k1;
-    ldb = k1;
     if (n1*m > lenC) {
         scale = (int)(n1*m/lenC) + 1;
         delete[] C;
         lenC *= scale;
         C = new double[lenC];
     }
-    ldc = m;
-    alpha = 1.0;
-    beta = 0.0;
 
     // For SVD
-    jobu  = 'N';
-    jobvt = 'N';
     m2 = d;
     rowsA = lenA/d;
-    ldu = m2;
-    ldvt = m2;
-    U = nullptr;
-    VT = nullptr;
 
     // TODO do the MM product outside of this function and extendTri function and use it commonly
     // for both
 #if DO_TIMING == 1
     gettimeofday(&start, NULL);
 #endif
-    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
+    cpuMatmul(x, scriptyH, C, yInd + 1, scriptyHLen / d, d, true, false);
+    // dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, scriptyH, &ldb, &beta, C, &ldc);
 #if DO_TIMING == 1
     gettimeofday(&end, NULL);
     elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
@@ -362,12 +312,12 @@ void LexTriangulator::findNewHyp(int yInd) {
     flags = cudaHostAllocMapped;
     cudaHostAlloc((void **)&newHyp, cap*sizeof(double), flags);
     if (newHyp == nullptr) {
-        throw std::runtime_error("Unable to allocate space for new hyperplanes:0");
+        throw std::runtime_error("Unable to allocate space for new hyperplanes:0\n");
     }
 
     cudaHostAlloc((void **)&newHyp2, cap*sizeof(double), flags);
     if (newHyp2 == nullptr) {
-        throw std::runtime_error("Unable to allocate space for new hyperplanes:1");
+        throw std::runtime_error("Unable to allocate space for new hyperplanes:1\n");
     }
 #else
     newHyp = new double[cap];
@@ -409,20 +359,77 @@ void LexTriangulator::findNewHyp(int yInd) {
         delete[] D;
         lenD *= scale;
         D = new double[lenD];
+#if USE_CUDA == 1
+        if (useCublas) {
+            cudaFree(d_D);
+            cudaMalloc(reinterpret_cast<void **>(&d_D), sizeof(double)*lenD);
+            if (d_D == nullptr) {
+                useCublas = false;
+                fprintf(stderr, "Unable to allocate enough space to check new hyperplanes:2\n");
+            }
+        }
+#endif
     }
 #if DO_TIMING == 1
     gettimeofday(&start, NULL);
 #endif
-    dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, D, &ldc);
+#if USE_CUDA == 1
+    // TODO Batch the Dgemm and fix this if statement so I am not calling dgemm in 3 places
+    if (useCublas) { 
+        status = gpuMatmul(ltHandle, d_x, newHyp, d_D, m, n1, k1, true, false);
+        // status = cublasDgemm(cblsHandle, CUBLAS_OP_T, CUBLAS_OP_N, m, n1, k1, &alpha, d_x, lda, newHyp, ldb, &beta, d_D, ldc);
+
+        if (status != CUBLAS_STATUS_SUCCESS) {
+            fprintf(stderr, "!!!! kernel execution error: %i\n", status);
+            // TODO Convert to a function
+            switch (status) {
+                case CUBLAS_STATUS_NOT_INITIALIZED:
+                    fprintf(stderr, "error: CUBLAS_STATUS_NOT_INITIALIZED!\n");
+                    break;
+                case CUBLAS_STATUS_ALLOC_FAILED:
+                    fprintf(stderr, "error: CUBLAS_STATUS_ALLOC_FAILED!\n");
+                    break;
+                case CUBLAS_STATUS_INVALID_VALUE:
+                    fprintf(stderr, "error: CUBLAS_STATUS_INVALID_VALUE!\n");
+                    break;
+                case CUBLAS_STATUS_ARCH_MISMATCH:
+                    fprintf(stderr, "error: CUBLAS_STATUS_ARCH_MISMATCH!\n");
+                    break;
+                case CUBLAS_STATUS_MAPPING_ERROR:
+                    fprintf(stderr, "error: CUBLAS_STATUS_MAPPING_ERROR!\n");
+                    break;
+                case CUBLAS_STATUS_EXECUTION_FAILED:
+                    fprintf(stderr, "error: CUBLAS_STATUS_EXECUTION_FAILED!\n");
+                    break;
+                case CUBLAS_STATUS_INTERNAL_ERROR:
+                    fprintf(stderr, "error: CUBLAS_STATUS_INTERNAL_ERROR!\n");
+                    break;
+                case CUBLAS_STATUS_NOT_SUPPORTED:
+                    fprintf(stderr, "error: CUBLAS_STATUS_NOT_SUPPORTED!\n");
+                    break;
+                case CUBLAS_STATUS_LICENSE_ERROR:
+                    fprintf(stderr, "error: CUBLAS_STATUS_LICENSE_ERROR!\n");
+                    break;
+            } 
+            cpuMatmul(x, newHyp, D, m, n1, k1, true, false);
+            //dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, 
+            //        D, &ldc);
+        } else {
+            cudaMemcpy(D, d_D, sizeof(double)*n1*m, cudaMemcpyDeviceToHost);
+        }
+    } else {
+        cpuMatmul(x, newHyp, D, m, n1, k1, true, false);
+        // dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, D, &ldc);
+    }
+#else
+    // dgemm_(&transA, &transB, &m, &n1, &k1, &alpha, x, &lda, newHyp, &ldb, &beta, D, &ldc);
+    cpuMatmul(x, newHyp, D, m, n1, k1, true, false);
+#endif
 #if DO_TIMING == 1
     gettimeofday(&end, NULL);
     elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
     std::cout << "Took " << elaps << " seconds for second MM product.\n";
 #endif
-
-    // SVD Params
-    lda = m2;
-    work = work; // new double[5*d];
 
     // Find rows that do not have at least d-1 zeros or do not contain points that live in 
     // d-1 dimensional space.  The first is easy to check, the latter is done via svd
@@ -461,7 +468,8 @@ void LexTriangulator::findNewHyp(int yInd) {
         numSVals = 0;
         lwork = 5*min;
 
-        dgesvd_(&jobu, &jobvt, &m2, &n2, A, &lda, S, U, &ldu, VT, &ldvt, work, &lwork, &info);
+
+        cpuSingularValues(A, S, m2, n2, work, lwork);
 
         numSVals = 0;
         for (k = 0; k < min; k++) {
@@ -489,7 +497,7 @@ void LexTriangulator::findNewHyp(int yInd) {
 #if DO_TIMING == 1
     gettimeofday(&start, NULL);
 #endif
-    int curIndex = 0;
+    unsigned int curIndex = 0;
     int nLen = 0;
     for (i = 0; i < n1; i++) {
         if (curIndex < toRemove.size() && i == toRemove[curIndex]) {

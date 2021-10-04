@@ -3,6 +3,8 @@
 
 #if USE_CUDA == 1
     #include <cuda_runtime.h>
+    #include <cublas_v2.h>
+    #include <cublasLt.h>
 #endif
 
 #include "triangulator.hpp"
@@ -10,17 +12,48 @@
 class LexTriangulator : public Triangulator {
     public:
         LexTriangulator(double* x, const int n, const int d) : Triangulator(x, n, d){
-            // nothing on purpose
+#if USE_CUDA == 1
+            cublasStatus_t status;
+
+            // Cublas Lt
+            status = cublasLtCreate(&ltHandle);
+            if (status != CUBLAS_STATUS_SUCCESS) {
+                useCublas = false;
+            }
+
+            // Cublas Handle
+            status = cublasCreate(&cblsHandle);
+
+            cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double)*n*d);
+            cudaMemcpy(d_x, x, sizeof(double)*n*d, cudaMemcpyHostToDevice);
+#endif
         }
         ~LexTriangulator() { 
 #if USE_CUDA == 1
-            cudaFreeHost(scriptyH);
+            cublasStatus_t status;
+
+            if (scriptyH != nullptr) {
+                cudaFreeHost(scriptyH);
+            }
+            status = cublasLtDestroy(ltHandle);
+            status = cublasDestroy(cblsHandle);
+
+            if (status != CUBLAS_STATUS_SUCCESS) {
+                // TODO print error and raise exception
+            }
 #else
             delete[] scriptyH;
 #endif
         }
         void computeTri() override;
     protected:
+#if USE_CUDA == 1
+        bool useCublas {true};
+        cublasLtHandle_t ltHandle;
+        cublasHandle_t cblsHandle;
+        double* d_x;
+        double* d_D;
+#endif
         void extendTri(int yInd);
         void findNewHyp(int yInd);
         // Needed Memory TODO Determine if I can allocate most of this with std::vector.

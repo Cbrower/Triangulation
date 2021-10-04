@@ -50,7 +50,7 @@ class Triangulator {
         }
         bool computedTri {false};
         double* x;
-        double* scriptyH;
+        double* scriptyH {nullptr};
         std::vector<int> delta; 
         int n;
         int d;

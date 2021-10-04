@@ -1,3 +1,5 @@
+#include <numeric>
+#include <cmath>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
@@ -11,33 +13,48 @@ enum class HyperplaneType {
 
 __global__ void computeHyperplanes1(double* cyInd, double* scriptyH, int* sP, int* sN, 
                 const int sPLen, const int sNLen, const int d, double* newHyp);
-__global__ void partitionHyperplanes();
 
-void cuFourierMotzkin(cudaHandles handles, double* x, double* d_x, double* scriptyH, 
-            int* scriptyHLen, double** workspace, int yInd, const int n, const int d) {
+__global__ void partitionHyperplanes(double *C, HyperplaneType *hType, const double tol, 
+                const int N);
+
+// TODO Check CUDA Status
+void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* scriptyHLen,
+                double** workspace, const int workspaceLen, const int yInd, 
+                const int n, const int d) {
+    const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
+    const int numHyperplanes = (*scriptyH)/d;
+    const int iLenPart = 1024;
+    int *sN;
+    int *sP;
+    int *sL;
     double *C;
-    short *hType; // TODO Make this a smaller datatype maybe enum class
+    HyperplaneType *hType;
 
-    // Allocate Matrix C
-    C = cudaMalloc((void **)&C, sizeof(double)*(yInd + 1)*(scriptyHLen/d));
-    type = cudaMalloc((void **)&type
+    // Allocate Data
+    cudaMalloc((void **)&C, sizeof(double)*(yInd + 1)*numHyperplanes);
+    cudaMalloc((void **)&hType, sizeof(HyperplaneType)*numHyperplanes);
 
-    gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, (*scriptyHLen) / d, d, 
+    gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, numHyperplanes, d, 
                     true, false, nullptr, 0);
+
+    // Setup grid and block dimensions for partitioning
+    dim3 block(iLen);
+    dim3 grid(((*scriptyHLen/d)+block.x-1)/block.x);
+    partitionHyperplanes<<<grid, block>>>(C, hType, TOLERANCE, yInd, numHyperplanes);
     
     
 }
 
-// TODO Understand cyInd
-__global__ void computeHyperplanes1(double* cyInd, double* scriptyH, int* sP, int* sN, 
-                const int sPLen, const int sNLen, const int d, double* newHyp) {
+// cyInd = C at yInd
+__global__ void computeHyperplanes1(double* C, double* scriptyH, int* sP, int* sN, 
+                const int sPLen, const int sNLen, const int yInd, const int d, double* newHyp) {
     // TODO Try other possible combinations
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
     int k;
 
-    double lambda_i = cyInd[sP[i]]; // What is cyInd
-    double lambda_j = cyInd[sN[i]]; // TODO Check this isn't a bug
+    double lambda_i = C[(yInd + 1)*sP[i] + yInd];
+    double lambda_j = C[(yInd + 1)*sN[j] + yInd]; // TODO Check this isn't a bug
 
     int tmpLen = i*d*sNLen;
 
@@ -47,8 +64,20 @@ __global__ void computeHyperplanes1(double* cyInd, double* scriptyH, int* sP, in
     }
 }
 
-__global__ void partitionHyperplanes() {
+__global__ void partitionHyperplanes(double *C, HyperplaneType *hType, const double tol, 
+                const int yInd, const int N) {
+    const int m = yInd + 1;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+    for (int i = idx; i < N; i += gridDim.x*blockDim.x) {
+        if (abs(C[i*m + yInd]) < tol) {
+            hType[i] = HyperplaneType::sL;
+        } else if(C[i*m + yInd] > tol) {
+            hType[i] = HyperplaneType::sP;
+        } else {
+            hType[i] = HyperplaneType::sN;
+        }
+    }
 }
 
 cublasStatus_t gpuMatmul(cublasLtHandle_t handle, const double* A, const double* B, double* C,

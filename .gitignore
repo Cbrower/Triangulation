@@ -4,3 +4,4 @@ gmon.out
 massif.out*
 build
 build/*
+build*

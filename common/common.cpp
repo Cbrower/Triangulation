@@ -12,6 +12,8 @@ extern "C" {
                     int* info);
 }
 
+int gcd(int a, int b);
+
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
 // TODO Make this faster, this is disguisting!!!!
@@ -121,4 +123,258 @@ void sortForL1Norm(double* scriptyH, const int n, const int d) {
     // sort scriptyH based on L1 Norms
 
     delete[] norms;
+}
+
+void reallocIfNeeded(double **data, int* len, const int expectedSize) {
+    int nSize;
+    if ((*len) < expectedSize) {
+        nSize = ((int)(expectedSize / (*len)) + 1)*(*len);
+        delete[] (*data);
+        *data = new double[nSize];
+        *len = nSize;
+    }
+}
+
+void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen,
+                int* scriptyHCap, const int yInd, const int n, const int d, 
+                const int numThreads) {
+    std::vector<int> sP;
+    std::vector<int> sN;
+    std::vector<int> sL;
+    int i;
+    int j;
+    int k;
+    int scale;
+    // For old hyperplanes
+    int origNumHyps;
+    // For New Hyperplanes
+    int cap;
+    int len;
+    int newNumHyps;
+    double lambda_i;
+    double lambda_j;
+    double *newHyp2;
+    // For filtering new hyperplanes
+    int count;
+    std::vector<int> toRemove; 
+    // SVD for filtering new hyperplanes
+    int min;
+    double *tmpA;
+    int rowsA; // The number of rows A can have
+    int lwork;
+    int numSVals;
+    // Data in the FMData pointer
+    double *A;
+    double *B;
+    double *C;
+    double *D;
+    double *S;
+    double *newHyp;
+    double *work;
+    int lenA;
+    int lenB;
+    int lenC;
+    int lenD;
+    int lenNewHyp;
+    int lenS;
+    int lenWork;
+
+    // Ensure C is large enough
+    origNumHyps = (*scriptyHLen)/d;
+    reallocIfNeeded(data.C, data.lenC, (yInd + 1)*origNumHyps);
+    C = *data.C;
+    lenC = *data.lenC;
+
+    // Step 1: Conduct matrix product.  This multiplication tells if a point x_j is 
+    // in the halfspace of a hyperplane scripyH_i.
+    cpuMatmul(x, *scriptyH, C, yInd + 1, origNumHyps, d, true, false);
+
+    // Step 2: Classify the points in the sets sL, sP, and sN per Theorem 7 of
+    // https://arxiv.org/pdf/0910.2845.pdf
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j, k, lambda_i, lambda_j)
+#endif
+    for (i = 0; i < origNumHyps; i++) {
+        if (fabs(C[i*(yInd + 1) + yInd]) < TOLERANCE) {
+            sL.push_back(i);
+        } else if(C[i*(yInd + 1) + yInd] > TOLERANCE) {
+            sP.push_back(i);
+        } else {
+            sN.push_back(i);
+        }
+    }
+
+    // Allocate enough memory for our new hyperplanes
+    cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
+    len = 0;
+    newHyp2 = new double[cap];
+
+    // Ensure newHyp is large enough
+    reallocIfNeeded(data.newHyp, data.lenNewHyp, cap);
+    newHyp = *data.newHyp;
+    lenNewHyp = *data.lenNewHyp;
+
+    // Step 3: Place the set builder notation elements from Theorem 7 of arxiv.0910.2845
+    // into the newHyp array
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j, k, lambda_i, lambda_j)
+#endif
+    for (i = 0; i < (int)sP.size(); i++) {
+        lambda_i = C[sP[i]*(yInd + 1) + yInd];
+        int tmpLen = i*d*sN.size();
+        for (j = 0; j < (int)sN.size(); j++) {
+            lambda_j = C[sN[j]*(yInd + 1) + yInd];
+            for (k = 0; k < d; k++) {
+                newHyp[tmpLen + j*d + k] = lambda_i * (*scriptyH)[sN[j]*d + k] -
+                                        lambda_j * (*scriptyH)[sP[i]*d + k];
+            }
+        }
+    }
+    len += sP.size()*sN.size()*d;
+
+    // Allocate Matrix D
+    reallocIfNeeded(data.D, data.lenD, (yInd + 1)*len/d);
+    D = *data.D;
+    lenD = *data.lenD;
+ 
+    // Step 4: Conduct another matrix product.  This multiplication tells 
+    // us if a point x_j is in the halfspace of a hyperplane scripyH_i.
+    newNumHyps = len / d;
+    cpuMatmul(x, newHyp, D, yInd+1, newNumHyps, d, true, false);
+
+    // Step 5: Remove unneeded hyperplanes
+
+    // Ensure A, S, and work are large enough
+    reallocIfNeeded(data.S, data.lenS, d);
+    reallocIfNeeded(data.work, data.lenWork, 5*d);
+    S = *data.S;
+    work = *data.work;
+    lenS = *data.lenS;
+    lenWork = *data.lenWork;
+
+    A = *data.A;
+    lenA = *data.lenA;
+    rowsA = lenA/d;
+    for (i = 0; i < newNumHyps; i++) {
+        count = 0;
+        for (j = 0; j < yInd + 1; j++) {
+            if (fabs(D[i*(yInd + 1) + j]) < TOLERANCE) {
+                if (count >= rowsA) {
+                    // Increase the size of A and copy data over
+                    tmpA = new double[2*rowsA*d];
+                    
+                    std::copy(A, A+rowsA*d, tmpA);
+                    rowsA *= 2;
+
+                    delete[] A;
+                    *data.A = tmpA;
+                    *data.lenA = rowsA*d;
+                    A = *data.A;;
+                    lenA = *data.lenA;
+                    tmpA = nullptr;
+                }
+                std::copy(x+j*d, x+(j+1)*d, A+count*d); 
+                count += 1;
+            }
+        }
+        if (count < d-1) {
+            toRemove.push_back(i);
+            continue;
+        }
+
+        // Now we compute the SVD and the number of singular values to get the rank
+        min = fmin(d, count);
+        numSVals = 0;
+        lwork = 5*min;
+
+        cpuSingularValues(A, S, d, count, work, lwork);
+
+        numSVals = 0;
+        for (k = 0; k < min; k++) {
+            if (fabs(S[k]) > TOLERANCE) {
+                numSVals += 1;
+            }
+        }
+
+        if (numSVals < d-1) {
+            toRemove.push_back(i);
+            continue;
+        }
+    }
+
+    // sort toRemove for removing unimportant hyperplanes
+    std::sort(toRemove.begin(), toRemove.end());
+
+    unsigned int curIndex = 0;
+    int nLen = 0;
+    for (i = 0; i < newNumHyps; i++) {
+        if (curIndex < toRemove.size() && i == toRemove[curIndex]) {
+            curIndex += 1;
+            continue;
+        }
+        for (j = 0; j < d; j++) {
+            newHyp2[nLen + j] = newHyp[i*d + j];
+        }
+        nLen += d;
+    }
+
+    newHyp = newHyp2;
+    newHyp2 = nullptr;
+    len = nLen;
+
+    
+    // Step 6: Add in the elements of sP and sL
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
+    for (i = 0; i < (int)sP.size(); i++) {
+        for (j = 0; j < d; j++) {
+            newHyp[len + i*d + j] = (*scriptyH)[sP[i]*d + j];
+        }
+    }
+    len += sP.size()*d;
+
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
+    for (i = 0; i < (int)sL.size(); i++) {
+        for (j = 0; j < d; j++) {
+            newHyp[len + i*d + j] = (*scriptyH)[sL[i]*d + j];
+        }
+    }
+    len += sL.size()*d;
+
+
+    // 4) Reduce them by gcd TODO Check if a self defined reduction is faster
+#if USE_OPENMP == 1
+    #pragma omp parallel for num_threads(numThreads) private(i, j)
+#endif
+    for (i = 0; i < len/d; i++) {
+        int listGCD = 0;
+        for (j = 0; j < d; j++) {
+            // First, round our double array b/c of fp errors.  This should always contain ints.
+            newHyp[i*d + j] = round(newHyp[i*d + j]);
+            listGCD = gcd(listGCD, abs(newHyp[i*d + j]));
+        }
+
+        for (j = 0; j < d; j++) {
+            newHyp[i*d + j] /= listGCD;
+        }
+    }
+
+    // Free old scriptyH and replace 
+    delete[] *scriptyH;
+    *scriptyH = newHyp;
+    *scriptyHLen = len;
+    *scriptyHCap = cap;
+}
+
+int gcd(int a, int b) {
+    int tmp;
+    while (b != 0) {
+        tmp = b;
+        b = a % b;
+        a = tmp;
+    }
+    return a;
 }

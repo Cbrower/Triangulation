@@ -6,3 +6,6 @@ add_library( CUDACommon
 )
 
 target_include_directories( CUDACommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if (DEBUG)
+    target_compile_options(CUDACommon PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-G>)
+endif()

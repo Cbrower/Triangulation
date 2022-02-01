@@ -67,6 +67,10 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     dim3 grid;
     HyperplaneType *hType;
 
+#if VERBOSE == 1
+    std::cout << "cuFourierMotzkin with yInd = " << yInd << "\n";
+#endif
+
     // Allocate Data
     checkCudaStatus(cudaMalloc((void **)&C, 
                 sizeof(double)*(yInd + 1)*numHyperplanes), __LINE__);
@@ -333,24 +337,25 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
     int j;
     int val;
     int counter;
-    // int inds[maxNPts];
+    int stride;
 
     if (idx >= N) {
         return;
     }
 
     counter = 0;
+    stride = min(N, blockDim.x);
 
     // Part 1 Place the indices into the inds array
     for (i = 0; i < nPts; i++) {
         val = (int)(abs(D[fmHyps[idx + offset]*nPts + i]) < tol);
-        inds[counter*maxNPts + threadIdx.x] = i*val; // Could also try "idx*maxNPts + counter"
+        inds[counter*stride + threadIdx.x] = i*val; // Could also try "idx*stride + counter"
         counter += val;
     }
 
     // Part 2 update indices to set to a valid value if i >= counter TODO Check if needed
     for (i = 0; i < maxNPts; i++) {
-        inds[i*maxNPts + threadIdx.x] = (int)(i < counter) * inds[i*maxNPts + threadIdx.x];
+        inds[i*stride + threadIdx.x] = (int)(i < counter) * inds[i*stride + threadIdx.x];
     }
 
     // Part 3 Synchronize all threads in the block TODO Determine if this is needed
@@ -359,7 +364,7 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
     // Part 4 Do the copy
     for (i = 0; i < maxNPts; i++)  {
         for (j = 0; j < d; j++) {
-            workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * x[inds[i*maxNPts + threadIdx.x]*d + j];
+            workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * x[inds[i*stride + threadIdx.x]*d + j];
         }
     }
 }

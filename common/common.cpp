@@ -189,6 +189,13 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // in the halfspace of a hyperplane scripyH_i.
     cpuMatmul(x, *scriptyH, C, yInd + 1, origNumHyps, d, true, false);
 
+#if VERBOSE == 1
+    std::cout << "Starting Fourier Motzkin Elimination: Iteration " << yInd - d << "\n";
+    // Print out matrix C
+    std::cout << "After Step 1:\nMatrix C:\n";
+    printMatrix(yInd + 1, origNumHyps, C);
+#endif
+
     // Step 2: Classify the points in the sets sL, sP, and sN per Theorem 7 of
     // https://arxiv.org/pdf/0910.2845.pdf
 #if USE_OPENMP == 1
@@ -203,6 +210,17 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
             sN.push_back(i);
         }
     }
+
+#if VERBOSE == 1
+    // Print out the different sets
+    std::cout << "After Step 2:\nsL:\n";
+    printMatrix(1, sL.size(), sL.data());
+    std::cout << "sN:\n";
+    printMatrix(1, sN.size(), sN.data());
+    std::cout << "sP:\n";
+    printMatrix(1, sP.size(), sP.data());
+
+#endif
 
     // Allocate enough memory for our new hyperplanes
     cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
@@ -232,6 +250,12 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     }
     len += sP.size()*sN.size()*d;
 
+#if VERBOSE == 1
+    std::cout << "After Step 3:\n";
+    std::cout << "newHyp:\n";
+    printMatrix(sP.size()*sN.size(), d, newHyp);
+#endif
+
     // Allocate Matrix D
     reallocIfNeeded(data.D, data.lenD, (yInd + 1)*len/d);
     D = *data.D;
@@ -241,6 +265,12 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // us if a point x_j is in the halfspace of a hyperplane scripyH_i.
     newNumHyps = len / d;
     cpuMatmul(x, newHyp, D, yInd+1, newNumHyps, d, true, false);
+
+#if VERBOSE == 1
+    std::cout << "After Step 4:\n";
+    std::cout << "D (" << yInd+1 << " x " << newNumHyps << "):\n";
+    printMatrix(yInd+1, newNumHyps, D);
+#endif
 
     // Step 5: Remove unneeded hyperplanes
 
@@ -322,6 +352,10 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     newHyp2 = nullptr;
     len = nLen;
 
+#if VERBOSE == 1
+    std::cout << "Found " << len / d << " new hyperplanes\n";
+#endif
+
     
     // Step 6: Add in the elements of sP and sL
 #if USE_OPENMP == 1
@@ -345,7 +379,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     len += sL.size()*d;
 
 
-    // 4) Reduce them by gcd TODO Check if a self defined reduction is faster
+    // Step 7 Reduce them by gcd TODO Check if a self defined reduction is faster
 #if USE_OPENMP == 1
     #pragma omp parallel for num_threads(numThreads) private(i, j)
 #endif
@@ -361,6 +395,12 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
             newHyp[i*d + j] /= listGCD;
         }
     }
+
+#if VERBOSE == 1
+    std::cout << "After steps 5-7:\nnewHyp:\n";
+    printMatrix(len/d, d, newHyp);
+    std::cout << "\n";
+#endif
 
     // Free old scriptyH and replace 
     delete[] *scriptyH;

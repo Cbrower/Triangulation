@@ -23,6 +23,27 @@ extern "C" {
 int sortForLinIndependence(double *scriptyH, const int n, const int d);
 void sortForL1Norm(double* scriptyH, const int n, const int d);
 
+struct FMData{
+    double **A;
+    int *lenA;
+    double **C;
+    int *lenC;
+    double **D;
+    int *lenD;
+    double **S;
+    int *lenS;
+    double **newHyp;
+    int *lenNewHyp;
+    double **work;
+    int *lenWork;
+};
+
+// subject to change arguments
+void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen,
+                int* scriptyHCap, const int yInd, const int n, const int d, 
+                const int numThreads=1);
+
+
 template<typename T>
 void lexSort(T* x, const int n, const int d) {
     // TODO Make this much faster
@@ -90,6 +111,5 @@ int cpuSingularValues(T *A, T *S, int m, int n, T *work, int lwork) {
 
     return info;
 }
-
 
 #endif //_COMMON_HPP

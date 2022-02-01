@@ -38,11 +38,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Call the subdirectories to build their components
 add_subdirectory(common)
-add_subdirectory(cudaCommon)
+if (USE_CUDA)
+    add_subdirectory(cudaCommon)
+endif()
 add_subdirectory(triangulators)
 
 add_executable(Triangulator main.cpp)
-target_link_libraries(Triangulator LINK_PUBLIC Triangulators ${LAPACK_LIBRARIES} ${CUDA_LIBRARIES} -L/usr/local/cuda/lib64 -lcublas -lcublasLt -lcudart)
+target_link_libraries(Triangulator LINK_PUBLIC Triangulators ${LAPACK_LIBRARIES} ${CUDA_LIBRARIES} -L/usr/local/cuda/lib64 -lcublas -lcublasLt -lcudart -lcusolver)
 
 install(TARGETS Triangulator DESTINATION bin)
 install(DIRECTORY cones DESTINATION .)

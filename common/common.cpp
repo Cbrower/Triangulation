@@ -128,8 +128,12 @@ void sortForL1Norm(double* scriptyH, const int n, const int d) {
 void reallocIfNeeded(double **data, int* len, const int expectedSize) {
     int nSize;
     if ((*len) < expectedSize) {
-        nSize = ((int)(expectedSize / (*len)) + 1)*(*len);
-        delete[] (*data);
+        if ((*len) == 0) {
+            nSize = expectedSize;
+        } else {
+            nSize = ((int)(expectedSize / (*len)) + 1)*(*len);
+            delete[] (*data);
+        }
         *data = new double[nSize];
         *len = nSize;
     }
@@ -153,7 +157,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     int newNumHyps;
     double lambda_i;
     double lambda_j;
-    double *newHyp2;
+    double *newHyps2;
     // For filtering new hyperplanes
     int count;
     std::vector<int> toRemove; 
@@ -169,13 +173,13 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     double *C;
     double *D;
     double *S;
-    double *newHyp;
+    double *newHyps;
     double *work;
     int lenA;
     int lenB;
     int lenC;
     int lenD;
-    int lenNewHyp;
+    int lenNewHyps;
     int lenS;
     int lenWork;
 
@@ -225,12 +229,12 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // Allocate enough memory for our new hyperplanes
     cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
     len = 0;
-    newHyp2 = new double[cap];
+    newHyps2 = new double[cap];
 
     // Ensure newHyp is large enough
-    reallocIfNeeded(data.newHyp, data.lenNewHyp, cap);
-    newHyp = *data.newHyp;
-    lenNewHyp = *data.lenNewHyp;
+    reallocIfNeeded(data.newHyps, data.lenNewHyps, cap);
+    newHyps = *data.newHyps;
+    lenNewHyps = *data.lenNewHyps;
 
     // Step 3: Place the set builder notation elements from Theorem 7 of arxiv.0910.2845
     // into the newHyp array
@@ -243,7 +247,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
         for (j = 0; j < (int)sN.size(); j++) {
             lambda_j = C[sN[j]*(yInd + 1) + yInd];
             for (k = 0; k < d; k++) {
-                newHyp[tmpLen + j*d + k] = lambda_i * (*scriptyH)[sN[j]*d + k] -
+                newHyps[tmpLen + j*d + k] = lambda_i * (*scriptyH)[sN[j]*d + k] -
                                         lambda_j * (*scriptyH)[sP[i]*d + k];
             }
         }
@@ -252,8 +256,8 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
 
 #if VERBOSE == 1
     std::cout << "After Step 3:\n";
-    std::cout << "newHyp:\n";
-    printMatrix(sP.size()*sN.size(), d, newHyp);
+    std::cout << "newHyps:\n";
+    printMatrix(sP.size()*sN.size(), d, newHyps);
 #endif
 
     // Allocate Matrix D
@@ -264,7 +268,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // Step 4: Conduct another matrix product.  This multiplication tells 
     // us if a point x_j is in the halfspace of a hyperplane scripyH_i.
     newNumHyps = len / d;
-    cpuMatmul(x, newHyp, D, yInd+1, newNumHyps, d, true, false);
+    cpuMatmul(x, newHyps, D, yInd+1, newNumHyps, d, true, false);
 
 #if VERBOSE == 1
     std::cout << "After Step 4:\n";
@@ -282,6 +286,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     lenS = *data.lenS;
     lenWork = *data.lenWork;
 
+    reallocIfNeeded(data.A, data.lenA, d*d);
     A = *data.A;
     lenA = *data.lenA;
     rowsA = lenA/d;
@@ -343,13 +348,13 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
             continue;
         }
         for (j = 0; j < d; j++) {
-            newHyp2[nLen + j] = newHyp[i*d + j];
+            newHyps2[nLen + j] = newHyps[i*d + j];
         }
         nLen += d;
     }
 
-    newHyp = newHyp2;
-    newHyp2 = nullptr;
+    newHyps = newHyps2;
+    newHyps2 = nullptr;
     len = nLen;
 
 #if VERBOSE == 1
@@ -363,7 +368,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
 #endif
     for (i = 0; i < (int)sP.size(); i++) {
         for (j = 0; j < d; j++) {
-            newHyp[len + i*d + j] = (*scriptyH)[sP[i]*d + j];
+            newHyps[len + i*d + j] = (*scriptyH)[sP[i]*d + j];
         }
     }
     len += sP.size()*d;
@@ -373,7 +378,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
 #endif
     for (i = 0; i < (int)sL.size(); i++) {
         for (j = 0; j < d; j++) {
-            newHyp[len + i*d + j] = (*scriptyH)[sL[i]*d + j];
+            newHyps[len + i*d + j] = (*scriptyH)[sL[i]*d + j];
         }
     }
     len += sL.size()*d;
@@ -387,27 +392,75 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
         int listGCD = 0;
         for (j = 0; j < d; j++) {
             // First, round our double array b/c of fp errors.  This should always contain ints.
-            newHyp[i*d + j] = round(newHyp[i*d + j]);
-            listGCD = gcd(listGCD, abs(newHyp[i*d + j]));
+            newHyps[i*d + j] = round(newHyps[i*d + j]);
+            listGCD = gcd(listGCD, abs(newHyps[i*d + j]));
         }
 
         for (j = 0; j < d; j++) {
-            newHyp[i*d + j] /= listGCD;
+            newHyps[i*d + j] /= listGCD;
         }
     }
 
 #if VERBOSE == 1
-    std::cout << "After steps 5-7:\nnewHyp:\n";
-    printMatrix(len/d, d, newHyp);
+    std::cout << "After steps 5-7:\nnewHyps:\n";
+    printMatrix(len/d, d, newHyps);
     std::cout << "\n";
 #endif
 
     // Free old scriptyH and replace 
     delete[] *scriptyH;
-    *scriptyH = newHyp;
+    *scriptyH = newHyps;
     *scriptyHLen = len;
     *scriptyHCap = cap;
 }
+
+void lexExtendTri(LexData &data, double* x, std::vector<int> &delta, 
+        double* scriptyH, int scriptyHLen,
+        int yInd, int n, const int d) {
+    // common
+    std::vector<int> indTracker;
+    double *p;
+    double *C;
+
+    // Reallocate data if needed
+    reallocIfNeeded(data.p, data.lenP, scriptyHLen/d);
+    reallocIfNeeded(data.C, data.lenC, (scriptyHLen/d)*(yInd + 1));
+
+    // Setting values for the \mathcal{H}^<(y) computation
+    p = *data.p;
+    cpuMatVecProd(scriptyH, &(x[yInd*d]), p, d, scriptyHLen/d, true);
+
+    // setting values for the computation of \sigma \cap H
+    C = *data.C;
+    cpuMatmul(x, scriptyH, C, yInd+1, scriptyHLen/d, d, true, false);
+
+    // Can be parallelized
+    int oDeltaLen = delta.size()/d;
+    indTracker.reserve(d);
+    for (int ih = 0;  ih < scriptyHLen/d; ih++) {
+        if (p[ih] > -TOLERANCE) {
+            continue;
+        }
+
+        for (int id = 0; id < oDeltaLen; id++) {
+            indTracker.clear();
+            for (int is = 0; is < d; is++) {
+                if (fabs(C[ih*(yInd + 1) + delta[id*d + is]]) < TOLERANCE) {
+                    indTracker.push_back(delta[id*d + is]);
+                }
+            }
+
+            if ((int)indTracker.size() == d - 1) {
+                // TODO Use STL Functions
+                for (int i = 0; i < d - 1; i++) {
+                    delta.push_back(indTracker[i]);
+                }
+                delta.push_back(yInd);
+            }
+        }
+    }
+}
+
 
 int gcd(int a, int b) {
     int tmp;

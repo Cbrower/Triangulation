@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
     std::cout << "\n" << tri->getNumSupHyperplanes() << " support hyperplanes:\n";
     printMatrix(tri->getNumSupHyperplanes(), d, tri->getSupportingHyperplanes());
 
-    std::cout << "\ndelta: \n";
+    std::cout << "\n" << (tri->getTriangulations().size()/d) << " Triangulations:\n";
     printMatrix(tri->getTriangulations().size()/d, d, tri->getTriangulations().data());
 
     std::cout << "Time to compute: " << elaps << " seconds.\n";

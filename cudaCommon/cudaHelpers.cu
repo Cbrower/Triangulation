@@ -11,12 +11,6 @@
 
 #include "cudaHelpers.hpp"
 
-enum class HyperplaneType {
-    sP = 0,
-    sN = 1,
-    sL = 2,
-};
-
 __global__ void computeHyperplanes1(double* C, double* scriptyH, int* sP, int* sN, 
                 const int sPLen, const int sNLen, const int yInd, const int d, double* newHyp);
 
@@ -66,6 +60,7 @@ inline void checkCudaStatus(cudaError_t status, int line) {
                 status, cudaGetErrorString(status), line);
         throw std::logic_error("cuda API failed");
     }
+    return error;
 }
 
 inline void checkCusolverStatus(cusolverStatus_t status) {
@@ -107,12 +102,27 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
     // Allocate Data
+    checkCudaStatus(
+            reallocIfNeeded(data.C, data.lenC, 
+                (yInd + 1)*numHyperplanes), __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.hType, data.lenHType,
+                numHyperplanes), __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.hyps, data.lenHyps,
+                numHyperplanes), __LINE__);
+    C = *data.C;
+    hType = *data.hType;
+    hyps = *data.hyps;
+    /*
+       TODO DELETE after verification
     checkCudaStatus(cudaMalloc((void **)&C, 
                 sizeof(double)*(yInd + 1)*numHyperplanes), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&hType, 
                 sizeof(HyperplaneType)*numHyperplanes), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&hyps,
                 sizeof(int)*numHyperplanes), __LINE__);
+    */
 
     // Initialize hyps as a sequence to associate hyperplanes and their HType
     // Similar to STL's iota
@@ -144,7 +154,10 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     assert(sPLen + sLLen + sNLen == numHyperplanes);
 
     // Free now unneeded memory
+    /*
+       TODO Delete After Verification
     checkCudaStatus(cudaFree(hType), __LINE__);
+    */
 
     // Point to the proper spots in memory for sP, sN, and sL
     sP = hyps;
@@ -158,8 +171,15 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     grid.x = max((sPLen+block.x-1)/block.x, 1);
     grid.y = max((sNLen+block.x-1)/block.x, 1);
 
+    checkCudaStatus(
+            reallocIfNeeded(data.newHyps, data.lenNewHyps,
+                max(1, sPLen)*max(1, sNLen)*d), __LINE__);
+    newHyps = *data.newHyps;
+    /*
+       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&newHyps, 
                 sizeof(double)*max(1, sPLen)*max(1, sNLen)*d), __LINE__);
+    */
 
     // Execute the kernel
     computeHyperplanes1<<<grid, block>>>(C, *scriptyH, sP, sN, sPLen, sNLen, 
@@ -168,20 +188,41 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
     // Free no longer needed memory
-    checkCudaStatus(cudaFree(C), __LINE__);
+    /*
+       TODO Delete After Verification
+        checkCudaStatus(cudaFree(C), __LINE__);
+    */
 
     // Run matrix multiplication of the newHyperplanes
     checkCudaStatus(
+            reallocIfNeeded(data.D, data.lenD, 
+                (yInd + 1)*max(1, sPLen)*max(1, sNLen)), __LINE__);
+    D = *data.D;
+    /*
+       TODO Delete After Verification
+    checkCudaStatus(
             cudaMalloc((void **)&D, sizeof(double)*(yInd + 1)*(max(1, sPLen)*max(1, sNLen))), 
             __LINE__);
-    checkCublasStatus(gpuMatmul(handles.ltHandle, x, newHyps, D, yInd + 1, sPLen*sNLen, d, 
-                    true, false, nullptr, 0));
+    */
+    gpuMatmul(handles.ltHandle, x, newHyps, D, yInd + 1, sPLen*sNLen, d, 
+                    true, false, nullptr, 0); 
 
     // Get largest number of intersected points by one of the hyperplanes
+    checkCudaStatus(
+            reallocIfNeeded(data.numPts, data.lenNumPts, sPLen*sNLen),
+            __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.bitMask, data.lenBitMask, sPLen*sNLen),
+            __LINE__);
+    numPts = *data.numPts;
+    bitMask = *data.bitMask;
+    /*
+       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&numPts, 
                 sizeof(int)*sPLen*sNLen), __LINE__);
     checkCudaStatus(cudaMalloc((void**)&bitMask, 
                 sizeof(bool)*sPLen*sNLen), __LINE__);
+    */
     block.x = iLenPart; // TODO maybe change
     block.y = 1;
     grid.x = (sPLen*sNLen + block.x - 1)/block.x;
@@ -195,8 +236,15 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 
     // Partition elements that have at least d-1 points they touch from the rest.
     // TODO Check that this op is faster than skipping this step.
+    checkCudaStatus(
+            reallocIfNeeded(data.fmHyps, data.lenFmHyps, sPLen*sNLen),
+            __LINE__);
+    fmHyps = *data.fmHyps;
+    /*
+       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void**)&fmHyps,
                 sizeof(int)*sPLen*sNLen), __LINE__);
+    */
     thrust::sequence(thrust::device, fmHyps, fmHyps + sPLen*sNLen, 0);
     gpuSortVecs(fmHyps, bitMask, sPLen*sNLen);
     fmHypsLen = gpuFindFirst(bitMask, true, sPLen*sNLen);
@@ -218,6 +266,25 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     int *info; 
     double *U;
     double *V;
+
+    checkCudaStatus(
+            reallocIfNeeded(data.S, data.lenS, initNumBatches*minMN),
+            __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.info, data.lenInfo, initNumBatches),
+            __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.U, data.lenU, initNumBatches*d*d),
+            __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.V, data.lenV, initNumBatches*maxNPts*maxNPts),
+            __LINE__);
+    S = *data.S;
+    info = *data.info;
+    U = *data.U;
+    V = *data.V;
+    /*
+       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&S, 
                 sizeof(double)*initNumBatches*minMN), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&info,
@@ -226,6 +293,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
                 sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
     checkCudaStatus(cudaMalloc((void**)&V,
                 sizeof(double)*initNumBatches*d*d), __LINE__);
+    */
 
 #if VERBOSE == 1
     std::cout << "MaxNPts = " << maxNPts << "\n";
@@ -397,11 +465,14 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
     // Free memory
+    /*
     cudaFree(D);
     cudaFree(bitMask);
     cudaFree(fmHyps);
     cudaFree(hyps);
     cudaFree(numPts);
+    cudaFree(newHyps);
+    */
 }
 
 // cyInd = C at yInd

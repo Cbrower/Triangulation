@@ -7,15 +7,56 @@
 #include <cublasLt.h>
 #include <cusolverDn.h>
 
+enum class HyperplaneType {
+    sP = 0,
+    sN = 1,
+    sL = 2,
+};
+
 struct cudaHandles {
     cublasLtHandle_t ltHandle;
     cusolverDnHandle_t dnHandle;
+};
+
+struct cuFMData {
+    double **C;
+    int *lenC;
+    double **D;
+    int *lenD;
+    double **S;
+    int *lenS;
+    double **U;
+    int *lenU;
+    double **V;
+    int *lenV;
+    double **newHyps;
+    int *lenNewHyps;
+    int **hyps;
+    int *lenHyps;
+    int **numPts;
+    int *lenNumPts;
+    int **fmHyps;
+    int *lenFmHyps;
+    int **info;
+    int *lenInfo;
+    bool **bitMask;
+    int *lenBitMask;
+    HyperplaneType **hType;
+    int *lenHType;
 };
 
 // From cublasLt example code.
 inline void checkCudaStatus(cudaError_t status) {
     if (status != cudaSuccess) {
         printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));
+        throw std::logic_error("cuda API failed");
+    }
+}
+
+inline void checkCudaStatus(cudaError_t status, int line) {
+    if (status != cudaSuccess) {
+        printf("cuda API failed with status %d: %s on line %d in file: cudaHelpers.cu\n", 
+                status, cudaGetErrorString(status), line);
         throw std::logic_error("cuda API failed");
     }
 }
@@ -29,9 +70,9 @@ inline void checkCublasStatus(cublasStatus_t status) {
 }
 
 // subject to change arguments
-void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* scriptyHLen,
-                int* scriptyHCap, double* workspace, const int workspaceLen, const int yInd, 
-                const int n, const int d);
+void cuFourierMotzkin(cuFMData, cudaHandles handles, double* x, double** scriptyH, 
+                int* scriptyHLen, int* scriptyHCap, double* workspace, 
+                const int workspaceLen, const int yInd, const int n, const int d);
 
 // Matmul
 // Conducts a matrix multiplication using cublasLt.

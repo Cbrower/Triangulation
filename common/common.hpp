@@ -18,6 +18,12 @@ extern "C" {
     void sgesvd_(char* jobu, char* jobvt, int* m, int* n, float* A, int* lda, float* S, 
                     float* U, int* ldu, float* VT, int* ldvt, float* work, int* lwork,
                     int* info);
+
+    void dgemv_(char* trans, int* m, int *n, double* alpha, double* A, int* lda, double* x, 
+            int* incx, double* beta, double* y, int* incy);
+
+    void sgemv_(char* trans, int* m, int *n, float* alpha, float* A, int* lda, float* x, 
+            int* incx, float* beta, float* y, int* incy);
 }
 
 int sortForLinIndependence(double *scriptyH, const int n, const int d);
@@ -32,8 +38,8 @@ struct FMData{
     int *lenD;
     double **S;
     int *lenS;
-    double **newHyp;
-    int *lenNewHyp;
+    double **newHyps;
+    int *lenNewHyps;
     double **work;
     int *lenWork;
 };
@@ -42,6 +48,16 @@ struct FMData{
 void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen,
                 int* scriptyHCap, const int yInd, const int n, const int d, 
                 const int numThreads=1);
+struct LexData {
+    double **C;
+    int *lenC;
+    double **p;
+    int *lenP;
+};
+
+void lexExtendTri(LexData &data, double* x, std::vector<int> &delta,
+        double* scriptyH, int scriptyHLen,
+        int yInd, int n, int d);
 
 
 template<typename T>
@@ -90,6 +106,23 @@ void cpuMatmul(T* A, T* B, T* C, int m, int n, int k, bool ta, bool tb) {
     } else {
         throw std::logic_error("matmul failed");
     }
+}
+
+template<typename T>
+void cpuMatVecProd(T* A, T* x, T* y, int m, int n, bool trans) {
+    int lda = m; // NOTE: If errors happen with dgemv, check this line
+    int incx = 1;
+    int incy = 1;
+    char t = (trans) ? 'T' : 'N';
+    T alpha = 1.0;
+    T beta = 0.0;
+
+    if constexpr(std::is_same<T, double>::value) {
+        dgemv_(&t, &m, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
+    } else if constexpr (std::is_same<T, float>::value) {
+        sgemv_(&t, &m, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy); 
+    }
+
 }
 
 template<typename T>

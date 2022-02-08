@@ -14,10 +14,6 @@
 #include "lexTriangulator.hpp"
 #include "common.hpp"
 
-#if USE_CUDA == 1
-    #include "cudaHelpers.hpp"
-#endif
-
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
 extern "C" {
@@ -26,9 +22,6 @@ extern "C" {
 
     // generate inverse of a matrix given its LU decomp
     void dgetri_(int* n, double* A, int* lda, int* ipiv, double* work, int* lwork, int* info);
-
-    // matrix vector product.  Note that this uses is in column major order
-    void dgemv_(char* trans, int* m, int *n, double* alpha, double* A, int* lda, double* x, int* incx, double* beta, double* y, int* incy);
 }
 
 // helper functions
@@ -52,9 +45,44 @@ void LexTriangulator::computeTri() {
     // setup initial values
     lwspace = d*d;
 
-    // Allocate memory
+    // Allocate memory for inverse
     lpckWspace = new double[lwspace];
-    // -- Allocate mem handle memory
+    piv = new int[d];
+
+    // -- Set Initial Values For FM and Triangulation Vars
+    // Common Vars
+    C = nullptr; 
+    lenC = 0;
+    D = nullptr;
+    lenD = 0;
+    newHyps = nullptr;
+    lenNewHyps = 0;
+    S = nullptr;
+    lenS = 0;
+    p = nullptr;
+    lenP = 0;
+#if USE_CUDA == 1
+    // CUDA Vars
+    U = nullptr;
+    lenU = 0;
+    V = nullptr;
+    lenV = 0;
+    hyps = nullptr;
+    lenHyps = 0;
+    numPts = nullptr;
+    lenNumPts = 0;
+    fmHyps = nullptr;
+    lenFmHyps = 0;
+    info = nullptr;
+    lenInfo = 0;
+    bitMask = nullptr;
+    lenBitMask = 0;
+    hType = nullptr;
+    lenHType = 0;
+#else
+    // CPU Only Vars
+    /*
+     TODO Delete After Verification
     lenA = 2*d*d;
     A = new double[lenA];
     lenC = n*n;
@@ -67,7 +95,14 @@ void LexTriangulator::computeTri() {
     S = new double[lenS];
     lenWork = 5*d;
     work = new double[lenWork];
-    piv = new int[d];
+    p = new double[d];
+    lenP = d;
+    */
+    A = nullptr;
+    lenA = 0;
+    work = nullptr;
+    lenWork = 0;
+#endif
 
     scriptyHCap = d*n; // Starting size of scriptyH
     scriptyHLen = 0;
@@ -119,7 +154,13 @@ void LexTriangulator::computeTri() {
         }
     }
 
+    // Free Unneeded memory
+    delete[] piv;
+    delete[] lpckWspace;
+
 #if USE_CUDA == 1
+    workspaceLen = d*1024; // TODO Change this
+    cudaMalloc((void**)&workspace, sizeof(double)*workspaceLen);
     cudaMalloc((void **)&d_scriptyH, sizeof(double)*scriptyHCap);
     cudaMemcpy(d_scriptyH, scriptyH, sizeof(double)*scriptyHCap, cudaMemcpyHostToDevice);
 #endif
@@ -128,7 +169,7 @@ void LexTriangulator::computeTri() {
     scriptyHLen += d*d;
 
     for (i = d; i < n; i++) {
-        // extendTri(i);
+        extendTri(i);
         findNewHyp(i);
     }
 
@@ -136,115 +177,160 @@ void LexTriangulator::computeTri() {
     delete[] scriptyH;
     scriptyH = new double[scriptyHCap];
     cudaMemcpy(scriptyH, d_scriptyH, sizeof(double)*scriptyHCap, cudaMemcpyDeviceToHost);
+    cudaFree(workspace);
 #endif
 
     lexSort(scriptyH, scriptyHLen/d, d);
+    lexSort(delta.data(), delta.size()/d, d);
 
     computedTri = true;
 
     // Free memory
-    delete[] piv;
-    delete[] lpckWspace;
-    delete[] A;
-    delete[] C;
-    delete[] D;
-    delete[] newHyp;
-    delete[] S;
-    delete[] work;
-
 #if USE_CUDA == 1
-    cudaFree(d_D);
+    if (C != nullptr) {
+        cudaFree(C);
+    }
+    if (D != nullptr) {
+        cudaFree(D);
+    }
+    if (S != nullptr) {
+        cudaFree(S);
+    }
+    if (newHyps != nullptr) {
+        cudaFree(newHyps);
+    }
+    if (p != nullptr) {
+        cudaFree(p);
+    }
+    if (U != nullptr) {
+        cudaFree(U);
+    }
+    if (V != nullptr) {
+        cudaFree(V);
+    }
+    if (hyps != nullptr) {
+        cudaFree(hyps);
+    }
+    if (numPts != nullptr) {
+        cudaFree(numPts);
+    }
+    if (fmHyps != nullptr) {
+        cudaFree(fmHyps);
+    }
+    if (info != nullptr) {
+        cudaFree(info);
+    }
+    if (bitMask != nullptr) {
+        cudaFree(bitMask);
+    }
+    if (hType != nullptr) {
+        cudaFree(hType);
+    }
+#else
+    if (A != nullptr) {
+        delete[] A;
+    }
+    if (C != nullptr) {
+        delete[] C;
+    }
+    if (D != nullptr) {
+        delete[] D;
+    }
+    if (newHyps != nullptr) {
+        delete[] newHyps;
+    }
+    if (S != nullptr) {
+        delete[] S;
+    }
+    if (work != nullptr) {
+        delete[] work;
+    }
+    if (p != nullptr) {
+        delete[] p;
+    }
 #endif
 
-    // Set lengths to zero
-    lenA = 0;
+    // Set lengths to zero and pointers to null pointers
+    C = nullptr;
     lenC = 0;
+    D = nullptr;
     lenD = 0;
-    lenHyp = 0;
+    newHyps = nullptr;
+    lenNewHyps = 0;
+    S = nullptr;
     lenS = 0;
+    p = nullptr;
+    lenP = 0;
+#if USE_CUDA == 1
+    U = nullptr;
+    lenU = 0;
+    V = nullptr;
+    lenV = 0;
+    hyps = nullptr;
+    lenHyps = 0;
+    numPts = nullptr;
+    lenNumPts = 0;
+    fmHyps = nullptr;
+    lenFmHyps = 0;
+    info = nullptr;
+    lenInfo = 0;
+    bitMask = nullptr;
+    lenBitMask = 0;
+    hType = nullptr;
+    lenHType = 0;
+#else
+    A = nullptr;
+    lenA = 0;
+    work = nullptr;
     lenWork = 0;
+#endif
 }
 
 void LexTriangulator::extendTri(int yInd) {
-    // common
-    std::vector<int> indTracker;
-    int m;
-    double alpha;
-    int lda;
-    double beta;
-    // for determining \mathcal{H}^<(y) via matrix vector product of scriptyH and y
-    char trans;
-    double *p;
-    int incx;
-    int incy;
-    // for \sigma \cap H via matrix matrix product
-    int n1;
-    int k;
-    double *C;
-
-    // TODO remove unnecesary parameters and put things in terms of d, n, etc.
-    // Setting values for the \mathcal{H}^<(y) computation
-    trans = 'T';
-    m = d;
-    n1 = scriptyHLen/d;
-    alpha = 1.0;
-    lda = m;
-    incx = 1;    
-    beta = 0.0;
-    p = new double[n];
-    incy = 1;
-
-    dgemv_(&trans, &m, &n1, &alpha, scriptyH, &lda, &(x[yInd*d]), &incx, &beta, p, &incy);
-
-    // setting values for the computation of \sigma \cap H
-    m = yInd+1;
-    n1 = scriptyHLen/d;
-    k = d;
-    C = new double[n1*m];
-
-    cpuMatmul(x, scriptyH, C, m, n1, k, true, false);
-
-    // Can be parallelized
-    int oDeltaLen = delta.size()/d;
-    indTracker.reserve(d);
-    for (int ih = 0;  ih < scriptyHLen/d; ih++) {
-        if (p[ih] > -TOLERANCE) {
-            continue;
-        }
-
-        for (int id = 0; id < oDeltaLen; id++) {
-            indTracker.clear();
-            for (int is = 0; is < d; is++) {
-                if (fabs(C[ih*m + delta[id*d + is]]) < TOLERANCE) {
-                    indTracker.push_back(delta[id*d + is]);
-                }
-            }
-
-            if ((int)indTracker.size() == d - 1) {
-                // TODO Use STL Functions
-                for (int i = 0; i < d - 1; i++) {
-                    delta.push_back(indTracker[i]);
-                }
-                delta.push_back(yInd);
-            }
-        }
-    }
-
-    delete[] p;
-    delete[] C;
+#if USE_CUDA == 0
+    LexData data;
+    data.C = &C;
+    data.lenC = &lenC;
+    data.p = &p;
+    data.lenP = &lenP;
+    lexExtendTri(data, x, delta, scriptyH, 
+            scriptyHLen, yInd, n, d);
+#endif
 }
 
 void LexTriangulator::findNewHyp(int yInd) {
 #if USE_CUDA == 1
     cudaHandles handles;
+    cuFMData data;
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
-    double *workspace;
-    int workspaceLen = d*1024; // TODO Change this
-    cudaMalloc((void**)&workspace, sizeof(double)*workspaceLen);
-    cuFourierMotzkin(handles, d_x, &d_scriptyH, &scriptyHLen,
+    data.C = &C;
+    data.lenC = &lenC;
+    data.D = &D;
+    data.lenD = &lenD;
+    data.S = &S;
+    data.lenS = &lenS;
+    data.U = &U;
+    data.lenU = &lenU;
+    data.V = &V;
+    data.lenV = &lenV;
+    data.newHyps = &newHyps;
+    data.lenNewHyps = &lenNewHyps;
+    data.hyps = &hyps;
+    data.lenHyps = &lenHyps;
+    data.numPts = &numPts;
+    data.lenNumPts = &lenNumPts;
+    data.fmHyps = &fmHyps;
+    data.lenFmHyps = &lenFmHyps;
+    data.info = &info;
+    data.lenInfo = &lenInfo;
+    data.bitMask = &bitMask;
+    data.lenBitMask = &lenBitMask;
+    data.hType = &hType;
+    data.lenHType = &lenHType;
+
+    cuFourierMotzkin(data, handles, d_x, &d_scriptyH, &scriptyHLen,
                 &scriptyHCap, workspace, workspaceLen, yInd, n, d);
-    cudaFree(workspace);
 #else
     // TODO Move this elsewhere
     FMData fmData;
@@ -258,8 +344,8 @@ void LexTriangulator::findNewHyp(int yInd) {
     fmData.lenS = &lenS;
     fmData.work = &work;
     fmData.lenWork = &lenWork;
-    fmData.newHyp = &newHyp;
-    fmData.lenNewHyp = &lenHyp;
+    fmData.newHyps = &newHyps;
+    fmData.lenNewHyps = &lenNewHyps;
 
     fourierMotzkin(fmData, x, &scriptyH, &scriptyHLen, &scriptyHCap, yInd, n, d);
 #endif

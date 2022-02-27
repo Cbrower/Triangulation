@@ -59,8 +59,6 @@ void LexTriangulator::computeTri() {
     lenNewHyps = 0;
     S = nullptr;
     lenS = 0;
-    p = nullptr;
-    lenP = 0;
 #if USE_CUDA == 1
     // CUDA Vars
     U = nullptr;
@@ -154,6 +152,11 @@ void LexTriangulator::computeTri() {
         }
     }
 
+#if VERBOSE == 1
+    std::cout << "Initial ScriptyH:\n";
+    printMatrix(d, d, scriptyH);
+#endif
+
     // Free Unneeded memory
     delete[] piv;
     delete[] lpckWspace;
@@ -245,9 +248,6 @@ void LexTriangulator::computeTri() {
     if (work != nullptr) {
         delete[] work;
     }
-    if (p != nullptr) {
-        delete[] p;
-    }
 #endif
 
     // Set lengths to zero and pointers to null pointers
@@ -259,8 +259,6 @@ void LexTriangulator::computeTri() {
     lenNewHyps = 0;
     S = nullptr;
     lenS = 0;
-    p = nullptr;
-    lenP = 0;
 #if USE_CUDA == 1
     U = nullptr;
     lenU = 0;
@@ -291,8 +289,6 @@ void LexTriangulator::extendTri(int yInd) {
     LexData data;
     data.C = &C;
     data.lenC = &lenC;
-    data.p = &p;
-    data.lenP = &lenP;
     lexExtendTri(data, x, delta, scriptyH, 
             scriptyHLen, yInd, n, d);
 #endif

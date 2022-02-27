@@ -7,6 +7,30 @@
 #include <cublasLt.h>
 #include <cusolverDn.h>
 
+// From cublasLt example code.
+inline void checkCudaStatus(cudaError_t status) {
+    if (status != cudaSuccess) {
+        printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));
+        throw std::logic_error("cuda API failed");
+    }
+}
+
+inline void checkCudaStatus(cudaError_t status, int line) {
+    if (status != cudaSuccess) {
+        printf("cuda API failed with status %d: %s on line %d in file: cudaHelpers.cu\n", 
+                status, cudaGetErrorString(status), line);
+        throw std::logic_error("cuda API failed");
+    }
+}
+
+// From cublasLt example code.
+inline void checkCublasStatus(cublasStatus_t status) {
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        printf("cuBLAS API failed with status %d\n", status);
+        throw std::logic_error("cuBLAS API failed");
+    }
+}
+
 enum class HyperplaneType {
     sP = 0,
     sN = 1,
@@ -45,34 +69,21 @@ struct cuFMData {
     int *lenHType;
 };
 
-// From cublasLt example code.
-inline void checkCudaStatus(cudaError_t status) {
-    if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));
-        throw std::logic_error("cuda API failed");
-    }
-}
-
-inline void checkCudaStatus(cudaError_t status, int line) {
-    if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s on line %d in file: cudaHelpers.cu\n", 
-                status, cudaGetErrorString(status), line);
-        throw std::logic_error("cuda API failed");
-    }
-}
-
-// From cublasLt example code.
-inline void checkCublasStatus(cublasStatus_t status) {
-    if (status != CUBLAS_STATUS_SUCCESS) {
-        printf("cuBLAS API failed with status %d\n", status);
-        throw std::logic_error("cuBLAS API failed");
-    }
-}
-
 // subject to change arguments
-void cuFourierMotzkin(cuFMData, cudaHandles handles, double* x, double** scriptyH, 
+void cuFourierMotzkin(cuFMData data, cudaHandles handles, double* x, double** scriptyH, 
                 int* scriptyHLen, int* scriptyHCap, double* workspace, 
                 const int workspaceLen, const int yInd, const int n, const int d);
+
+struct cuLexData {
+    double **C;
+    double *lenC;
+    bool **bitMask;
+    int *lenBitMask;
+};
+
+void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, double* scriptyH,
+        int scriptyHLen, double* workspace, const int workspaceLen, const int yInd,
+        const int n, const int d);
 
 // Matmul
 // Conducts a matrix multiplication using cublasLt.

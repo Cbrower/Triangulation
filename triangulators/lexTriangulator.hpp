@@ -98,8 +98,6 @@ class LexTriangulator : public Triangulator {
         int lenS;
         double *newHyps;
         int lenNewHyps; 
-        double *p;
-        int lenP;
 #if USE_CUDA == 1
         double *workspace;
         int workspaceLen;

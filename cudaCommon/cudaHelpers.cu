@@ -336,49 +336,10 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
         // Call cuSolver to get svd
-        checkCusolverStatus(gpuBatchedGetApproxSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V));
-
-#if VERBOSE == 1
-        {
-            int *buf = new int[batchSize];
-            cudaMemcpy(buf, info, sizeof(int)*batchSize, cudaMemcpyDeviceToHost);
-            std::cout << "Info:\n";
-            for (int i = 0; i < batchSize; i++) {
-                std::cout << buf[i] << " ";
-            }
-            std::cout << "\n";
-            delete[] buf;
-        }
-#endif
-
-#if VERBOSE == 1
-        {
-            double *buf = new double[batchSize*d];
-            cudaMemcpy(buf, S, sizeof(double)*batchSize*d, cudaMemcpyDeviceToHost);
-            std::cout << "singular vals:\n";
-            for (int i = 0; i < batchSize; i++) {
-                for (int j = 0; j < d; j++) {
-                    std::cout << buf[i*d + j] << " ";
-                }
-                std::cout << "\n";
-            }
-            std::cout << "\n";
-            delete[] buf;
-        }
-#endif
-
-#if VERBOSE == 1
-        {
-            bool *buf = new bool[sPLen*sNLen];
-            cudaMemcpy(buf, bitMask, sizeof(bool)*sPLen*sNLen, cudaMemcpyDeviceToHost);
-            std::cout << "bitMask before:\n";
-            for (int i = 0; i < sPLen*sNLen; i++) {
-                std::cout << buf[i] << " ";
-            }
-            std::cout << "\n";
-            delete[] buf;
-        }
-#endif
+        // gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V);
+        gpuBatchedGetApproxSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V);
+        checkCudaStatus(cudaGetLastError(), __LINE__);
+        checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
         // CUDA Kernel to update bitmask
         // NOTE prior block and grid dimensions work for this kernel
@@ -564,19 +525,10 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
     }
 
     // Part 3 Do the copy
-    if (trans) {
-        for (i = 0; i < d; i++) {
-            for (j = 0; j < maxNPts; j++)  {
-                workspace[idx*maxNPts*d + i*maxNPts + j] = (int)(j < counter) * 
-                    x[inds[j*stride + threadIdx.x]*d + i];
-            }
-        }
-    } else {
-        for (i = 0; i < maxNPts; i++)  {
-            for (j = 0; j < d; j++) {
-                workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * 
-                    x[inds[i*stride + threadIdx.x]*d + j];
-            }
+    for (i = 0; i < maxNPts; i++)  {
+        for (j = 0; j < d; j++) {
+            workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * 
+                x[inds[i*stride + threadIdx.x]*d + j];
         }
     }
 }
@@ -635,6 +587,87 @@ __global__ void mappedCopyAndReduceHyps(double *output, const double *input, con
         for (int i = 0; i < d; i++) {
             output[tid*d + i] = round(input[idx*d + i])/listGCD;
         }
+    }
+}
+
+void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, double* scriptyH,
+        int scriptyHLen, double* workspace, const int workspaceLen, const int yInd,
+        const int n, const int d) { 
+    // common
+    std::vector<int> indTracker; // TODO Remove
+    double *C;
+
+    // Reallocate data if needed
+    reallocIfNeeded(data.C, data.lenC, (scriptyHLen/d)*(yInd + 1));
+    reallocIfNeeded(data.bitMask, data.lenBitMask, scriptyHLen/d);
+
+    // setting values for the computation of \sigma \cap H
+    C = *data.C;
+    gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, scriptyHLen/d, d, true, false,
+            workspace, workspaceLen*sizeof(double));
+
+    // Can be parallelized
+    int oDeltaLen = delta.size()/d;
+    indTracker.reserve(d);
+    for (int ih = 0;  ih < scriptyHLen/d; ih++) {
+        if (C[ih*(yInd + 1) + yInd] > -TOLERANCE) {
+            continue;
+        }
+
+        for (int id = 0; id < oDeltaLen; id++) {
+            indTracker.clear();
+            for (int is = 0; is < d; is++) {
+                if (fabs(C[ih*(yInd + 1) + delta[id*d + is]]) < TOLERANCE) {
+                    indTracker.push_back(delta[id*d + is]);
+                }
+            }
+
+            if ((int)indTracker.size() == d - 1) {
+                // TODO Use STL Functions
+                for (int i = 0; i < d - 1; i++) {
+                    delta.push_back(indTracker[i]);
+                }
+                delta.push_back(yInd);
+            }
+        }
+    }
+}
+
+__global__ void findScriptyHLessThanY(bool* bitMask, const double* C, 
+        const int numRows, const int numCols, const int yInd) {
+    const int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    
+    for (int idx = tid; idx < numRows; idx += gridDim.x*blockDim.x) {
+        bitMask[idx] = C[idx*numCols + yInd] > -TOLERANCE
+    }
+}
+
+__global__ void findNewTris(int* nDeltas, const int* validHyps, const int lenValidHyps,
+        const double *C, const int numCols, const int yInd, const int* delta, 
+        const int deltaLen, const int d) {
+    extern __shared__ int inds[];
+    const int tid_x = blockDim.x * blockIdx.x + threadIdx.x;
+    const int tid_y = blockDim.y * blockIdx.y + threadIdx.y;
+    int cnt;
+    int deltaIdx;
+    int val;
+
+    for (int ih = 0; ih < lenValidHyps; ih += gridDim.x*blockDim.x) {
+        for (int id = 0; id < deltaLen; id += gridDim.y*blockDim.y) {
+            cnt = 0;
+            for (int is = 0; is < d; is++) {
+                deltaIdx = delta[id*d + is];
+                val = (fabs(C[ih*numCols + deltaIdx]) < TOLERANCE);
+                inds[ + cnt] = deltaIdx;
+                cnt += val;
+            }
+
+            val = cnt == d - 1;
+            for (int i = 0; i < d - 1; i++) {
+                nDeltas[ + i] = val*(inds[ + i] + 1) - 1;
+            }
+        }
+
     }
 }
 
@@ -737,6 +770,7 @@ cublasStatus_t gpuMatmul(cublasLtHandle_t handle, const double* A, const double*
     return status;
 }
 
+// Influenced from the official cusolver library samples
 cusolverStatus_t gpuBatchedGetSingularVals(cusolverDnHandle_t cusolverH, double* A, double* S, int* info, 
         const int m, const int n, const int batchSize, double* U, double* V) {
     

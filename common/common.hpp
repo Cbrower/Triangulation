@@ -51,8 +51,6 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
 struct LexData {
     double **C;
     int *lenC;
-    double **p;
-    int *lenP;
 };
 
 void lexExtendTri(LexData &data, double* x, std::vector<int> &delta,

@@ -195,9 +195,11 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
 
 #if VERBOSE == 1
     std::cout << "Starting Fourier Motzkin Elimination: Iteration " << yInd - d << "\n";
+    std::cout << "scriptyH:\n";
+    printMatrix(origNumHyps, d, *scriptyH);
     // Print out matrix C
     std::cout << "After Step 1:\nMatrix C:\n";
-    printMatrix(yInd + 1, origNumHyps, C);
+    printMatrix(origNumHyps, yInd + 1, C);
 #endif
 
     // Step 2: Classify the points in the sets sL, sP, and sN per Theorem 7 of
@@ -423,12 +425,7 @@ void lexExtendTri(LexData &data, double* x, std::vector<int> &delta,
     double *C;
 
     // Reallocate data if needed
-    reallocIfNeeded(data.p, data.lenP, scriptyHLen/d);
     reallocIfNeeded(data.C, data.lenC, (scriptyHLen/d)*(yInd + 1));
-
-    // Setting values for the \mathcal{H}^<(y) computation
-    p = *data.p;
-    cpuMatVecProd(scriptyH, &(x[yInd*d]), p, d, scriptyHLen/d, true);
 
     // setting values for the computation of \sigma \cap H
     C = *data.C;
@@ -438,7 +435,7 @@ void lexExtendTri(LexData &data, double* x, std::vector<int> &delta,
     int oDeltaLen = delta.size()/d;
     indTracker.reserve(d);
     for (int ih = 0;  ih < scriptyHLen/d; ih++) {
-        if (p[ih] > -TOLERANCE) {
+        if (C[ih*(yInd + 1) + yInd] > -TOLERANCE) {
             continue;
         }
 

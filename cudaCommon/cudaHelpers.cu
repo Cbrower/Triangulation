@@ -11,8 +11,6 @@
 
 #include "cudaHelpers.hpp"
 
-const bool TRANS = true;
-
 enum class HyperplaneType {
     sP = 0,
     sN = 1,
@@ -122,11 +120,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 
     // Conduct the matrix multiplication
     gpuMatmul(handles.ltHandle, x, *scriptyH, C, yInd + 1, numHyperplanes, d, 
-                    true, false, nullptr, 0);
-    /*
-    gpuMatmul(handles.ltHandle, x, *scriptyH, C, yInd + 1, numHyperplanes, d, 
                     true, false, workspace, workspaceLen*sizeof(double));
-    */
 
     // Setup grid and block dimensions for partitioning
     block.x = iLenPart;
@@ -228,17 +222,10 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
                 sizeof(double)*initNumBatches*minMN), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&info,
                 sizeof(int)*initNumBatches), __LINE__);
-    if (TRANS) {
-        checkCudaStatus(cudaMalloc((void**)&U,
-                    sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
-        checkCudaStatus(cudaMalloc((void**)&V,
-                    sizeof(double)*initNumBatches*d*d), __LINE__);
-    } else {
-        checkCudaStatus(cudaMalloc((void**)&U,
-                    sizeof(double)*initNumBatches*d*d), __LINE__);
-        checkCudaStatus(cudaMalloc((void**)&V,
-                    sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
-    }
+    checkCudaStatus(cudaMalloc((void**)&U,
+                sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
+    checkCudaStatus(cudaMalloc((void**)&V,
+                sizeof(double)*initNumBatches*d*d), __LINE__);
 
 #if VERBOSE == 1
     std::cout << "MaxNPts = " << maxNPts << "\n";
@@ -257,7 +244,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
         grid.y = 1;
         // TODO Ensure batchSize is the correct argument
         loadHypData<<<grid, block, maxNPts*block.x*sizeof(int)>>>(workspace, x, D, fmHyps, 
-                offset, workspaceLen, maxNPts, batchSize, yInd+1, d, TOLERANCE, TRANS);
+                offset, workspaceLen, maxNPts, batchSize, yInd+1, d, TOLERANCE, true);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
@@ -267,25 +254,13 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
             cudaMemcpy(buf, workspace, sizeof(double)*batchSize*maxNPts*d, 
                     cudaMemcpyDeviceToHost);
             std::cout << "Workspace:\n";
-            if (TRANS) {
-                for (int i = 0; i < batchSize; i++) {
-                    std::cout << "Matrix " << i << "\n";
-                    for (int j = 0; j < maxNPts; j++) {
-                        for (int k = 0; k < d; k++) {
-                            std::cout << buf[i*maxNPts*d + k*maxNPts + j] << " ";
-                        }
-                        std::cout << "\n";
+            for (int i = 0; i < batchSize; i++) {
+                std::cout << "Matrix " << i << "\n";
+                for (int j = 0; j < maxNPts; j++) {
+                    for (int k = 0; k < d; k++) {
+                        std::cout << buf[i*maxNPts*d + k*maxNPts + j] << " ";
                     }
-                }
-            } else {
-                for (int i = 0; i < batchSize; i++) {
-                    std::cout << "Matrix " << i << "\n";
-                    for (int j = 0; j < maxNPts; j++) {
-                        for (int k = 0; k < d; k++) {
-                            std::cout << buf[i*maxNPts*d + j*d + k] << " ";
-                        }
-                        std::cout << "\n";
-                    }
+                    std::cout << "\n";
                 }
             }
             delete[] buf;
@@ -294,13 +269,6 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 
         // Call cuSolver to get svd
         checkCusolverStatus(gpuBatchedGetApproxSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V));
-        /*
-        if (TRANS) {
-            checkCusolverStatus(gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V));
-        } else {
-            checkCusolverStatus(gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V));
-        }
-        */
 
 #if VERBOSE == 1
         {

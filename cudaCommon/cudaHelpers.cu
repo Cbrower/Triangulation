@@ -624,6 +624,21 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
         gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, numHyps, d, true, false,
             workspace, workspaceLen*sizeof(double)),
         __LINE__);
+#if VERBOSE == 1
+    {
+        double *buf = new double[numHyps*(yInd + 1)];
+        cudaMemcpy(buf, C, sizeof(double)*numHyps*(yInd + 1), cudaMemcpyDeviceToHost);
+
+        std::cout << "C:\n";
+        for (int i = 0; i < numHyps; i++) {
+            for (int j = 0; j < yInd + 1; j++) {
+                std::cout << buf[i*(yInd + 1) + j] << " ";
+            }
+            std::cout << "\n";
+        }
+        delete[] buf;
+    }
+#endif
 
     // Initialize indexes corresponding to the bitMask
     bitMask = *data.bitMask;
@@ -637,12 +652,39 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     findScriptyHLessThanY<<<grid, block>>>(bitMask, C, numHyps, yInd + 1, yInd, TOLERANCE);
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+#if VERBOSE == 1
+    {
+        bool *buf = new bool[numHyps];
+        cudaMemcpy(buf, bitMask, sizeof(bool)*numHyps, cudaMemcpyDeviceToHost);
+
+        std::cout << "bitMask (After findScriptyHLessThanY):\n";
+        for (int i = 0; i < numHyps; i++) {
+            std::cout << buf[i] << " ";
+        }
+        std::cout << "\n";
+        delete[] buf;
+    }
+#endif
 
     gpuSortVecs(hypInds, bitMask, numHyps);
     numValidHyps = gpuFindFirst(bitMask, true, numHyps);
     if (numValidHyps == -1) {
         numValidHyps = numHyps;
     }
+
+#if VERBOSE == 1
+    {
+        int *buf = new int[numHyps];
+        cudaMemcpy(buf, hypInds, sizeof(int)*numHyps, cudaMemcpyDeviceToHost);
+
+        std::cout << "hypInds (After sort):\n";
+        for (int i = 0; i < numHyps; i++) {
+            std::cout << buf[i] << " ";
+        }
+        std::cout << "\n";
+        delete[] buf;
+    }
+#endif
 
     // Compute triangulations for each pair of hyperplane, old triangulation
     // If the generated triangulation is invalid, it places -1, -1, ..., -1 
@@ -675,6 +717,22 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
             *delta, oNumTris, d, TOLERANCE);
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+
+#if VERBOSE == 1
+    {
+        bool *buf = new bool[numValidHyps*oNumTris];
+        cudaMemcpy(buf, bitMask, sizeof(bool)*numValidHyps*oNumTris, cudaMemcpyDeviceToHost);
+
+        std::cout << "bitMask (after findNewTris):\n";
+        for (int i = 0; i < numValidHyps; i++) {
+            for (int j = 0; j < oNumTris; j++) {
+                std::cout << buf[i*oNumTris + j] << " ";
+            }
+            std::cout << "\n";
+        }
+        delete[] buf;
+    }
+#endif
     
     gpuSortVecs(newTriInds, bitMask, numValidHyps*oNumTris);
     numNewTris = gpuFindFirst(bitMask, true, numValidHyps*oNumTris);
@@ -710,7 +768,6 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     }
 
     // Copy the new hyperplanes over
-    std::cout << "Iteration: " << (yInd - d) << ", numNewTris = " << numNewTris << "\n";
     if (numNewTris > 0) {
         block.x = 256;
         block.y = 1;
@@ -756,8 +813,8 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
                 cnt += val;
             }
 
-            val = cnt == d - 1;
-            nDeltas[offset + d-1] = val*yInd;
+            val = cnt < d - 1;
+            nDeltas[offset + d-1] = (!val)*yInd;
             bitMask[tid_x*numTris + tid_y] = val;
         }
 

@@ -29,7 +29,18 @@ __global__ void checkSingularVals(const int* info, const double* S, bool* mask,
                 const int batchSize, const int offset, const int minMN,
                 const int d, const double tol);
 
-__global__ void mappedCopyHyperplanes(double *output, const double *input, const int N, const int d, int* map);
+template <typename T>
+__global__ void mappedCopyHyperplanes(T *output, const T *input, const int N, const int d, int* map) {
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int mappedIdx;
+
+    for (int idx = tid; idx < N; idx += gridDim.x * blockDim.x) {
+        mappedIdx = map[idx];
+        for (int i = 0; i < d; i++) {
+            output[idx*d + i] = input[mappedIdx*d + i];
+        }
+    }
+}
 
 __global__ void mappedCopyAndReduceHyps(double *output, const double *input, const int N, const int d, int* map);
 
@@ -336,8 +347,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
         // Call cuSolver to get svd
-        // gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V);
-        gpuBatchedGetApproxSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V);
+        gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
@@ -550,18 +560,6 @@ __global__ void checkSingularVals(const int* info, const double* S, bool* mask,
     mask[tid + offset] = cnt < (d - 1);
 }
 
-__global__ void mappedCopyHyperplanes(double *output, const double *input, const int N, const int d, int* map) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int idx;
-
-    if (tid < N) {
-        idx = map[tid];
-        for (int i = 0; i < d; i++) {
-            output[tid*d + i] = input[idx*d + i];
-        }
-    }
-}
-
 // TODO Speedup with faster gcd algorithm
 __device__ int gpuGCD(int a, int b) {
     int tmp;
@@ -590,82 +588,177 @@ __global__ void mappedCopyAndReduceHyps(double *output, const double *input, con
     }
 }
 
-void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, double* scriptyH,
-        int scriptyHLen, double* workspace, const int workspaceLen, const int yInd,
-        const int n, const int d) { 
+__global__ void findScriptyHLessThanY(bool* bitMask, const double* C, 
+        const int numRows, const int numCols, const int yInd, const double tol);
+
+__global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
+        const int lenValidHyps, const double *C, const int numCols, const int yInd,
+        const int* delta, const int numTris, const int d, const double tol);
+
+void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta, int *numTris, 
+        int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
+        const int workspaceLen, const int yInd, const int n, const int d) { 
     // common
-    std::vector<int> indTracker; // TODO Remove
+    const int numHyps = scriptyHLen / d;
+    const int oNumTris = *numTris;
+    const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
+    int numValidHyps;
+    int numNewTris;
+    dim3 grid;
+    dim3 block;
     double *C;
+    int *iWorkspace = reinterpret_cast<int *>(workspace);
+    int *hypInds;
+    int *nDelta;
+    int *newTriInds;
+    bool *bitMask;
 
     // Reallocate data if needed
-    reallocIfNeeded(data.C, data.lenC, (scriptyHLen/d)*(yInd + 1));
-    reallocIfNeeded(data.bitMask, data.lenBitMask, scriptyHLen/d);
+    checkCudaStatus(reallocIfNeeded(data.C, data.lenC, numHyps*(yInd + 1)), __LINE__);
+    checkCudaStatus(reallocIfNeeded(data.bitMask, data.lenBitMask, numHyps), __LINE__);
+    checkCudaStatus(reallocIfNeeded(data.hypInds, data.lenHypInds, numHyps), __LINE__);
 
     // setting values for the computation of \sigma \cap H
     C = *data.C;
-    gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, scriptyHLen/d, d, true, false,
-            workspace, workspaceLen*sizeof(double));
+    checkCublasStatus(
+        gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, numHyps, d, true, false,
+            workspace, workspaceLen*sizeof(double)),
+        __LINE__);
 
-    // Can be parallelized
-    int oDeltaLen = delta.size()/d;
-    indTracker.reserve(d);
-    for (int ih = 0;  ih < scriptyHLen/d; ih++) {
-        if (C[ih*(yInd + 1) + yInd] > -TOLERANCE) {
-            continue;
-        }
+    // Initialize indexes corresponding to the bitMask
+    bitMask = *data.bitMask;
+    hypInds = *data.hypInds;
+    thrust::sequence(thrust::device, hypInds, hypInds + numHyps, 0);
 
-        for (int id = 0; id < oDeltaLen; id++) {
-            indTracker.clear();
-            for (int is = 0; is < d; is++) {
-                if (fabs(C[ih*(yInd + 1) + delta[id*d + is]]) < TOLERANCE) {
-                    indTracker.push_back(delta[id*d + is]);
-                }
-            }
+    // Determine the "valid" hyperplanes that can be used for
+    // building new triangulations
+    block.x = 256;
+    grid.x = (numHyps + block.x - 1) / block.x;
+    findScriptyHLessThanY<<<grid, block>>>(bitMask, C, numHyps, yInd + 1, yInd, TOLERANCE);
+    checkCudaStatus(cudaGetLastError(), __LINE__);
+    checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
-            if ((int)indTracker.size() == d - 1) {
-                // TODO Use STL Functions
-                for (int i = 0; i < d - 1; i++) {
-                    delta.push_back(indTracker[i]);
-                }
-                delta.push_back(yInd);
-            }
-        }
+    gpuSortVecs(hypInds, bitMask, numHyps);
+    numValidHyps = gpuFindFirst(bitMask, true, numHyps);
+    if (numValidHyps == -1) {
+        numValidHyps = numHyps;
     }
+
+    // Compute triangulations for each pair of hyperplane, old triangulation
+    // If the generated triangulation is invalid, it places -1, -1, ..., -1 
+    // instead of partial values
+    // This process may require multiple mini batches
+
+    // Prep necessary data
+    checkCudaStatus(
+            reallocIfNeeded(data.bitMask, data.lenBitMask, numValidHyps*oNumTris),
+            __LINE__);
+    checkCudaStatus(
+            reallocIfNeeded(data.newTriInds, data.lenNewTriInds, numValidHyps*oNumTris),
+            __LINE__);
+
+    bitMask = *data.bitMask;
+    newTriInds = *data.newTriInds;
+
+    thrust::sequence(thrust::device, newTriInds, newTriInds + numValidHyps*oNumTris, 0);
+
+    // If the assert does not pass, we will likely be out of memory anyways because
+    // the workspace should grap as much memory as possible.
+    assert(workspaceLen*(sizeof(double)/sizeof(int)) >= numValidHyps*oNumTris*d);
+
+    // Generate the data 
+    block.x = 16;
+    block.y = 16;
+    grid.x = (numValidHyps + block.x - 1) / block.x;
+    grid.y = (oNumTris + block.y - 1) / block.y;
+    findNewTris<<<grid, block>>>(iWorkspace, bitMask, hypInds, numValidHyps, C, yInd+1, yInd, 
+            *delta, oNumTris, d, TOLERANCE);
+    checkCudaStatus(cudaGetLastError(), __LINE__);
+    checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+    
+    gpuSortVecs(newTriInds, bitMask, numValidHyps*oNumTris);
+    numNewTris = gpuFindFirst(bitMask, true, numValidHyps*oNumTris);
+    if (numNewTris == -1) {
+        numNewTris = numValidHyps*oNumTris;
+    }
+
+    if (*deltaCap < d*(oNumTris + numNewTris)) {
+        // Extra variables needed for the swaps
+        int *tmp_ptr;
+        int tmp;
+
+        // Add the new hyperplanes to delta
+        checkCudaStatus(
+                reallocIfNeeded(data.nDelta, data.lenNDelta, d*(oNumTris + numNewTris)),
+                __LINE__);
+        nDelta = *data.nDelta;
+
+        // Add the old 
+        checkCudaStatus(
+                cudaMemcpy(nDelta, *delta, sizeof(int)*d*oNumTris, cudaMemcpyDeviceToDevice),
+                __LINE__);
+
+        // Swap delta and nDelta
+        tmp_ptr = *data.nDelta;
+        *data.nDelta = *delta;
+        *delta = tmp_ptr;
+        
+        // Swap lenNDelta and deltaCap
+        tmp = *data.lenNDelta;
+        *data.lenNDelta = *deltaCap;
+        *deltaCap = tmp;
+    }
+
+    // Copy the new hyperplanes over
+    std::cout << "Iteration: " << (yInd - d) << ", numNewTris = " << numNewTris << "\n";
+    if (numNewTris > 0) {
+        block.x = 256;
+        block.y = 1;
+        grid.x = (numNewTris + block.x - 1) / block.x;
+        grid.y = 1;
+        mappedCopyHyperplanes<<<grid, block>>>(*delta + d*oNumTris, 
+                iWorkspace, numNewTris, d, newTriInds);
+        checkCudaStatus(cudaGetLastError(), __LINE__);
+        checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+    }
+
+    // Cleanup
+    *numTris = oNumTris + numNewTris;
 }
 
 __global__ void findScriptyHLessThanY(bool* bitMask, const double* C, 
-        const int numRows, const int numCols, const int yInd) {
+        const int numRows, const int numCols, const int yInd, const double tol) {
     const int tid = blockDim.x * blockIdx.x + threadIdx.x;
     
     for (int idx = tid; idx < numRows; idx += gridDim.x*blockDim.x) {
-        bitMask[idx] = C[idx*numCols + yInd] > -TOLERANCE
+        bitMask[idx] = C[idx*numCols + yInd] > -tol;
     }
 }
 
-__global__ void findNewTris(int* nDeltas, const int* validHyps, const int lenValidHyps,
-        const double *C, const int numCols, const int yInd, const int* delta, 
-        const int deltaLen, const int d) {
-    extern __shared__ int inds[];
+__global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
+        const int lenValidHyps, const double *C, const int numCols, const int yInd,
+        const int* delta, const int numTris, const int d, const double tol) {
     const int tid_x = blockDim.x * blockIdx.x + threadIdx.x;
     const int tid_y = blockDim.y * blockIdx.y + threadIdx.y;
+    int offset;
     int cnt;
     int deltaIdx;
     int val;
 
-    for (int ih = 0; ih < lenValidHyps; ih += gridDim.x*blockDim.x) {
-        for (int id = 0; id < deltaLen; id += gridDim.y*blockDim.y) {
+    for (int ih = tid_x; ih < lenValidHyps; ih += gridDim.x*blockDim.x) {
+        for (int id = tid_y; id < numTris; id += gridDim.y*blockDim.y) {
+            offset = ih*d*numTris + id*d;
             cnt = 0;
             for (int is = 0; is < d; is++) {
                 deltaIdx = delta[id*d + is];
-                val = (fabs(C[ih*numCols + deltaIdx]) < TOLERANCE);
-                inds[ + cnt] = deltaIdx;
+                val = (fabs(C[validHyps[ih]*numCols + deltaIdx]) < tol);
+                nDeltas[offset + cnt] = deltaIdx;
                 cnt += val;
             }
 
             val = cnt == d - 1;
-            for (int i = 0; i < d - 1; i++) {
-                nDeltas[ + i] = val*(inds[ + i] + 1) - 1;
-            }
+            nDeltas[offset + d-1] = val*yInd;
+            bitMask[tid_x*numTris + tid_y] = val;
         }
 
     }

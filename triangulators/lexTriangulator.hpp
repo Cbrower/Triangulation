@@ -83,8 +83,11 @@ class LexTriangulator : public Triangulator {
         cublasHandle_t cblsHandle;
         cusolverDnHandle_t dnHandle;
         cudaStream_t stream;
-        double* d_x;
-        double* d_scriptyH;
+        double *d_x;
+        double *d_scriptyH;
+        int *d_delta;
+        int numTris;
+        int deltaCap;
         // TODO Delete After Verification double* d_D;
 #endif
         void extendTri(int yInd);
@@ -117,6 +120,8 @@ class LexTriangulator : public Triangulator {
         int lenBitMask;
         HyperplaneType *hType;
         int lenHType;
+        int *nDelta;
+        int lenNDelta;
 #else
         double *A; // 2*d*d
         int lenA;

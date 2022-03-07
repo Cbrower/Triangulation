@@ -35,6 +35,9 @@ void LexTriangulator::computeTri() {
     int lwspace;
     int error;
     int *piv;
+#if USE_CUDA == 1
+    int *tmpDelta;
+#endif
     double det;
     double *lpckWspace;
 
@@ -163,9 +166,15 @@ void LexTriangulator::computeTri() {
 
 #if USE_CUDA == 1
     workspaceLen = d*1024; // TODO Change this
+    deltaCap = 50*d; // TODO Change this
+    numTris = 1;
+    // Allocate GPU Memory
     cudaMalloc((void**)&workspace, sizeof(double)*workspaceLen);
     cudaMalloc((void **)&d_scriptyH, sizeof(double)*scriptyHCap);
+    cudaMalloc((void **)&d_delta, sizeof(int)*deltaCap);
+    // Copy Data
     cudaMemcpy(d_scriptyH, scriptyH, sizeof(double)*scriptyHCap, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_delta, delta.data(), sizeof(int)*numTris*d, cudaMemcpyHostToDevice);
 #endif
 
     // increment scriptyHLen to account for new data
@@ -180,7 +189,16 @@ void LexTriangulator::computeTri() {
     delete[] scriptyH;
     scriptyH = new double[scriptyHCap];
     cudaMemcpy(scriptyH, d_scriptyH, sizeof(double)*scriptyHCap, cudaMemcpyDeviceToHost);
+
+    tmpDelta = new int[numTris*d];
+    cudaMemcpy(tmpDelta, d_delta, sizeof(int)*numTris*d, cudaMemcpyDeviceToHost);
+
+    delta.clear();
+    delta.insert(delta.end(), tmpDelta, tmpDelta + numTris*d);
+
+    delete[] tmpDelta;
     cudaFree(workspace);
+    cudaFree(d_delta);
 #endif
 
     lexSort(scriptyH, scriptyHLen/d, d);
@@ -201,9 +219,6 @@ void LexTriangulator::computeTri() {
     }
     if (newHyps != nullptr) {
         cudaFree(newHyps);
-    }
-    if (p != nullptr) {
-        cudaFree(p);
     }
     if (U != nullptr) {
         cudaFree(U);
@@ -228,6 +243,9 @@ void LexTriangulator::computeTri() {
     }
     if (hType != nullptr) {
         cudaFree(hType);
+    }
+    if (nDelta != nullptr) {
+        cudaFree(nDelta);
     }
 #else
     if (A != nullptr) {
@@ -276,6 +294,8 @@ void LexTriangulator::computeTri() {
     lenBitMask = 0;
     hType = nullptr;
     lenHType = 0;
+    nDelta = nullptr;
+    lenNDelta = 0;
 #else
     A = nullptr;
     lenA = 0;
@@ -285,7 +305,24 @@ void LexTriangulator::computeTri() {
 }
 
 void LexTriangulator::extendTri(int yInd) {
-#if USE_CUDA == 0
+#if USE_CUDA == 1
+    cudaHandles handles;
+    cuLexData data;
+    handles.ltHandle = ltHandle;
+    handles.dnHandle = dnHandle;
+    data.C = &C;
+    data.lenC = &lenC;
+    data.bitMask = &bitMask;
+    data.lenBitMask = &lenBitMask;
+    data.hypInds = &hyps;
+    data.lenHypInds = &lenHyps;
+    data.newTriInds = &fmHyps;
+    data.lenNewTriInds = &lenFmHyps;
+    data.nDelta = &nDelta;
+    data.lenNDelta = &lenNDelta;
+    cuLexExtendTri(data, handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
+            scriptyHLen, workspace, workspaceLen, yInd, n, d);
+#else
     LexData data;
     data.C = &C;
     data.lenC = &lenC;

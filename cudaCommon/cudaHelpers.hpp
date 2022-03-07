@@ -17,7 +17,7 @@ inline void checkCudaStatus(cudaError_t status) {
 
 inline void checkCudaStatus(cudaError_t status, int line) {
     if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s on line %d in file: cudaHelpers.cu\n", 
+        printf("cuda API failed with status %d: %s on line %d\n", 
                 status, cudaGetErrorString(status), line);
         throw std::logic_error("cuda API failed");
     }
@@ -27,6 +27,13 @@ inline void checkCudaStatus(cudaError_t status, int line) {
 inline void checkCublasStatus(cublasStatus_t status) {
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("cuBLAS API failed with status %d\n", status);
+        throw std::logic_error("cuBLAS API failed");
+    }
+}
+
+inline void checkCublasStatus(cublasStatus_t status, int line) {
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        printf("cuBLAS API failed with status %d on line %d\n", status, line);
         throw std::logic_error("cuBLAS API failed");
     }
 }
@@ -76,14 +83,20 @@ void cuFourierMotzkin(cuFMData data, cudaHandles handles, double* x, double** sc
 
 struct cuLexData {
     double **C;
-    double *lenC;
+    int *lenC;
     bool **bitMask;
     int *lenBitMask;
+    int **hypInds;
+    int *lenHypInds;
+    int **newTriInds;
+    int *lenNewTriInds;
+    int **nDelta;
+    int *lenNDelta;
 };
 
-void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, double* scriptyH,
-        int scriptyHLen, double* workspace, const int workspaceLen, const int yInd,
-        const int n, const int d);
+void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta, int *numTris, 
+        int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
+        const int workspaceLen, const int yInd, const int n, const int d);
 
 // Matmul
 // Conducts a matrix multiplication using cublasLt.

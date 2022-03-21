@@ -113,27 +113,12 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
     // Allocate Data
-    checkCudaStatus(
-            reallocIfNeeded(data.C, data.lenC, 
-                (yInd + 1)*numHyperplanes), __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.hType, data.lenHType,
-                numHyperplanes), __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.hyps, data.lenHyps,
-                numHyperplanes), __LINE__);
-    C = *data.C;
-    hType = *data.hType;
-    hyps = *data.hyps;
-    /*
-       TODO DELETE after verification
     checkCudaStatus(cudaMalloc((void **)&C, 
                 sizeof(double)*(yInd + 1)*numHyperplanes), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&hType, 
                 sizeof(HyperplaneType)*numHyperplanes), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&hyps,
                 sizeof(int)*numHyperplanes), __LINE__);
-    */
 
     // Initialize hyps as a sequence to associate hyperplanes and their HType
     // Similar to STL's iota
@@ -182,15 +167,8 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     grid.x = max((sPLen+block.x-1)/block.x, 1);
     grid.y = max((sNLen+block.x-1)/block.x, 1);
 
-    checkCudaStatus(
-            reallocIfNeeded(data.newHyps, data.lenNewHyps,
-                max(1, sPLen)*max(1, sNLen)*d), __LINE__);
-    newHyps = *data.newHyps;
-    /*
-       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&newHyps, 
                 sizeof(double)*max(1, sPLen)*max(1, sNLen)*d), __LINE__);
-    */
 
     // Execute the kernel
     computeHyperplanes1<<<grid, block>>>(C, *scriptyH, sP, sN, sPLen, sNLen, 
@@ -199,41 +177,21 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
     // Free no longer needed memory
-    /*
-       TODO Delete After Verification
-        checkCudaStatus(cudaFree(C), __LINE__);
-    */
+    checkCudaStatus(cudaFree(C), __LINE__);
 
     // Run matrix multiplication of the newHyperplanes
     checkCudaStatus(
-            reallocIfNeeded(data.D, data.lenD, 
-                (yInd + 1)*max(1, sPLen)*max(1, sNLen)), __LINE__);
-    D = *data.D;
-    /*
-       TODO Delete After Verification
-    checkCudaStatus(
             cudaMalloc((void **)&D, sizeof(double)*(yInd + 1)*(max(1, sPLen)*max(1, sNLen))), 
             __LINE__);
-    */
     gpuMatmul(handles.ltHandle, x, newHyps, D, yInd + 1, sPLen*sNLen, d, 
                     true, false, nullptr, 0); 
 
     // Get largest number of intersected points by one of the hyperplanes
-    checkCudaStatus(
-            reallocIfNeeded(data.numPts, data.lenNumPts, sPLen*sNLen),
-            __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.bitMask, data.lenBitMask, sPLen*sNLen),
-            __LINE__);
-    numPts = *data.numPts;
-    bitMask = *data.bitMask;
-    /*
-       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&numPts, 
                 sizeof(int)*sPLen*sNLen), __LINE__);
     checkCudaStatus(cudaMalloc((void**)&bitMask, 
                 sizeof(bool)*sPLen*sNLen), __LINE__);
-    */
+
     block.x = iLenPart; // TODO maybe change
     block.y = 1;
     grid.x = (sPLen*sNLen + block.x - 1)/block.x;
@@ -247,15 +205,9 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 
     // Partition elements that have at least d-1 points they touch from the rest.
     // TODO Check that this op is faster than skipping this step.
-    checkCudaStatus(
-            reallocIfNeeded(data.fmHyps, data.lenFmHyps, sPLen*sNLen),
-            __LINE__);
-    fmHyps = *data.fmHyps;
-    /*
-       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void**)&fmHyps,
                 sizeof(int)*sPLen*sNLen), __LINE__);
-    */
+
     thrust::sequence(thrust::device, fmHyps, fmHyps + sPLen*sNLen, 0);
     gpuSortVecs(fmHyps, bitMask, sPLen*sNLen);
     fmHypsLen = gpuFindFirst(bitMask, true, sPLen*sNLen);
@@ -278,24 +230,6 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
     double *U;
     double *V;
 
-    checkCudaStatus(
-            reallocIfNeeded(data.S, data.lenS, initNumBatches*minMN),
-            __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.info, data.lenInfo, initNumBatches),
-            __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.U, data.lenU, initNumBatches*d*d),
-            __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.V, data.lenV, initNumBatches*maxNPts*maxNPts),
-            __LINE__);
-    S = *data.S;
-    info = *data.info;
-    U = *data.U;
-    V = *data.V;
-    /*
-       TODO Delete After Verification
     checkCudaStatus(cudaMalloc((void **)&S, 
                 sizeof(double)*initNumBatches*minMN), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&info,
@@ -304,7 +238,6 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
                 sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
     checkCudaStatus(cudaMalloc((void**)&V,
                 sizeof(double)*initNumBatches*d*d), __LINE__);
-    */
 
 #if VERBOSE == 1
     std::cout << "MaxNPts = " << maxNPts << "\n";
@@ -436,14 +369,12 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* sc
 #endif
 
     // Free memory
-    /*
     cudaFree(D);
     cudaFree(bitMask);
     cudaFree(fmHyps);
     cudaFree(hyps);
     cudaFree(numPts);
     cudaFree(newHyps);
-    */
 }
 
 // cyInd = C at yInd
@@ -613,10 +544,10 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     int *newTriInds;
     bool *bitMask;
 
-    // Reallocate data if needed
-    checkCudaStatus(reallocIfNeeded(data.C, data.lenC, numHyps*(yInd + 1)), __LINE__);
-    checkCudaStatus(reallocIfNeeded(data.bitMask, data.lenBitMask, numHyps), __LINE__);
-    checkCudaStatus(reallocIfNeeded(data.hypInds, data.lenHypInds, numHyps), __LINE__);
+    // Allocate Data
+    cudaMalloc((void **)&C, sizeof(double)*numHyps*(yInd + 1));
+    cudaMalloc((void **)&bitMask, sizeof(bool)*numHyps);
+    cudaMalloc((void **)&hypInds, sizeof(int)*numHyps);
 
     // setting values for the computation of \sigma \cap H
     C = *data.C;
@@ -692,15 +623,11 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     // This process may require multiple mini batches
 
     // Prep necessary data
-    checkCudaStatus(
-            reallocIfNeeded(data.bitMask, data.lenBitMask, numValidHyps*oNumTris),
-            __LINE__);
-    checkCudaStatus(
-            reallocIfNeeded(data.newTriInds, data.lenNewTriInds, numValidHyps*oNumTris),
-            __LINE__);
-
-    bitMask = *data.bitMask;
-    newTriInds = *data.newTriInds;
+    if (numHyps < numValidHyps*oNumTris) {
+        cudaFree(bitMask);
+        cudaMalloc((void **)&bitMask, sizeof(bool)*numValidHyps*oNumTris);
+    }
+    cudaMalloc((void **)&newTriInds, sizeof(int)*numValidHyps*oNumTris);
 
     thrust::sequence(thrust::device, newTriInds, newTriInds + numValidHyps*oNumTris, 0);
 
@@ -746,25 +673,16 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
         int tmp;
 
         // Add the new hyperplanes to delta
-        checkCudaStatus(
-                reallocIfNeeded(data.nDelta, data.lenNDelta, d*(oNumTris + numNewTris)),
-                __LINE__);
-        nDelta = *data.nDelta;
+        cudaMalloc((void **)&nDelta, sizeof(int)*d*(oNumTris + numNewTris));
 
         // Add the old 
         checkCudaStatus(
                 cudaMemcpy(nDelta, *delta, sizeof(int)*d*oNumTris, cudaMemcpyDeviceToDevice),
                 __LINE__);
 
-        // Swap delta and nDelta
-        tmp_ptr = *data.nDelta;
-        *data.nDelta = *delta;
-        *delta = tmp_ptr;
-        
-        // Swap lenNDelta and deltaCap
-        tmp = *data.lenNDelta;
-        *data.lenNDelta = *deltaCap;
-        *deltaCap = tmp;
+        cudaFree(*delta);
+        *delta = nDelta;
+        *deltaCap = d*(oNumTris + numNewTris);
     }
 
     // Copy the new hyperplanes over
@@ -781,6 +699,10 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
 
     // Cleanup
     *numTris = oNumTris + numNewTris;
+    cudaFree(C); // TODO Don't free, pass it out of the function for FM
+    cudaFree(bitMask);
+    cudaFree(hypInds);
+    cudaFree(newTriInds);
 }
 
 __global__ void findScriptyHLessThanY(bool* bitMask, const double* C, 

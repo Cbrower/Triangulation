@@ -550,7 +550,6 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     cudaMalloc((void **)&hypInds, sizeof(int)*numHyps);
 
     // setting values for the computation of \sigma \cap H
-    C = *data.C;
     checkCublasStatus(
         gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, numHyps, d, true, false,
             workspace, workspaceLen*sizeof(double)),
@@ -572,8 +571,6 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
 #endif
 
     // Initialize indexes corresponding to the bitMask
-    bitMask = *data.bitMask;
-    hypInds = *data.hypInds;
     thrust::sequence(thrust::device, hypInds, hypInds + numHyps, 0);
 
     // Determine the "valid" hyperplanes that can be used for
@@ -668,10 +665,6 @@ void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta,
     }
 
     if (*deltaCap < d*(oNumTris + numNewTris)) {
-        // Extra variables needed for the swaps
-        int *tmp_ptr;
-        int tmp;
-
         // Add the new hyperplanes to delta
         cudaMalloc((void **)&nDelta, sizeof(int)*d*(oNumTris + numNewTris));
 

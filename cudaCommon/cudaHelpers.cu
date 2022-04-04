@@ -717,6 +717,7 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
     int deltaIdx;
     int val;
 
+    // TODO Write design decisions and why and quantitive info.
     for (int ih = tid_x; ih < lenValidHyps; ih += gridDim.x*blockDim.x) {
         for (int id = tid_y; id < numTris; id += gridDim.y*blockDim.y) {
             offset = ih*d*numTris + id*d;

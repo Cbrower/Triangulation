@@ -533,6 +533,7 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     const int numHyps = scriptyHLen / d;
     const int oNumTris = *numTris;
     const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
+    bool workspaceUsed = true;
     int numValidHyps;
     int numNewTris;
     dim3 grid;
@@ -630,7 +631,11 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
 
     // If the assert does not pass, we will likely be out of memory anyways because
     // the workspace should grap as much memory as possible.
-    assert(workspaceLen*(sizeof(double)/sizeof(int)) >= numValidHyps*oNumTris*d);
+    if (workspaceLen*(sizeof(double)/sizeof(int)) < numValidHyps*oNumTris*d) {
+        workspaceUsed = false;
+        checkCudaStatus(cudaMalloc((void **)&iWorkspace, sizeof(int)*numValidHyps*oNumTris*d), 
+                __LINE__);
+    }
 
     // Generate the data 
     block.x = 16;
@@ -691,6 +696,9 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     }
 
     // Cleanup
+    if (!workspaceUsed) {
+        cudaFree(iWorkspace);
+    }
     *numTris = oNumTris + numNewTris;
     cudaFree(C); // TODO Don't free, pass it out of the function for FM
     cudaFree(bitMask);

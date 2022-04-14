@@ -148,7 +148,7 @@ void LexTriangulator::computeTri() {
     delete[] lpckWspace;
 
 #if USE_CUDA == 1
-    workspaceLen = d*1024; // TODO Change this
+    workspaceLen = d*4096; // TODO Change this
     deltaCap = 50*d; // TODO Change this
     numTris = 1;
     // Allocate GPU Memory

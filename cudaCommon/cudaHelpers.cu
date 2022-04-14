@@ -82,10 +82,10 @@ inline void checkCusolverStatus(cusolverStatus_t status) {
 }
 
 // TODO Check CUDA Status
-void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, int* scriptyHLen,
-                int* scriptyHCap, double* workspace, const int workspaceLen, const int yInd, 
-                const int n, const int d) {
-    const double TOLERANCE = sqrt(std::numeric_limits<float>::epsilon());
+void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, 
+                int* scriptyHLen, int* scriptyHCap, double* workspace, 
+                const int workspaceLen, const int yInd, const int n, const int d) {
+    const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
     const int numHyperplanes = (*scriptyHLen)/d;
     const int iLenPart = 1024;
     const int iLenFM = 32;
@@ -526,7 +526,7 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
         const int lenValidHyps, const double *C, const int numCols, const int yInd,
         const int* delta, const int numTris, const int d, const double tol);
 
-void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta, int *numTris, 
+void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
         int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
         const int workspaceLen, const int yInd, const int n, const int d) { 
     // common

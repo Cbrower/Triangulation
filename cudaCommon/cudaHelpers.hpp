@@ -49,52 +49,12 @@ struct cudaHandles {
     cusolverDnHandle_t dnHandle;
 };
 
-struct cuFMData {
-    double **C;
-    int *lenC;
-    double **D;
-    int *lenD;
-    double **S;
-    int *lenS;
-    double **U;
-    int *lenU;
-    double **V;
-    int *lenV;
-    double **newHyps;
-    int *lenNewHyps;
-    int **hyps;
-    int *lenHyps;
-    int **numPts;
-    int *lenNumPts;
-    int **fmHyps;
-    int *lenFmHyps;
-    int **info;
-    int *lenInfo;
-    bool **bitMask;
-    int *lenBitMask;
-    HyperplaneType **hType;
-    int *lenHType;
-};
-
 // subject to change arguments
-void cuFourierMotzkin(cuFMData data, cudaHandles handles, double* x, double** scriptyH, 
+void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, 
                 int* scriptyHLen, int* scriptyHCap, double* workspace, 
                 const int workspaceLen, const int yInd, const int n, const int d);
 
-struct cuLexData {
-    double **C;
-    int *lenC;
-    bool **bitMask;
-    int *lenBitMask;
-    int **hypInds;
-    int *lenHypInds;
-    int **newTriInds;
-    int *lenNewTriInds;
-    int **nDelta;
-    int *lenNDelta;
-};
-
-void cuLexExtendTri(cuLexData data, cudaHandles handles, double* x, int** delta, int *numTris, 
+void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
         int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
         const int workspaceLen, const int yInd, const int n, const int d);
 

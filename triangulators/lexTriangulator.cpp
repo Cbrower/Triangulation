@@ -82,23 +82,6 @@ void LexTriangulator::computeTri() {
     lenHType = 0;
 #else
     // CPU Only Vars
-    /*
-     TODO Delete After Verification
-    lenA = 2*d*d;
-    A = new double[lenA];
-    lenC = n*n;
-    C = new double[lenC];
-    lenD = n*n;
-    D = new double[lenD];
-    lenHyp = n*n;
-    newHyp = new double[lenHyp];
-    lenS = d;
-    S = new double[lenS];
-    lenWork = 5*d;
-    work = new double[lenWork];
-    p = new double[d];
-    lenP = d;
-    */
     A = nullptr;
     lenA = 0;
     work = nullptr;
@@ -307,20 +290,9 @@ void LexTriangulator::computeTri() {
 void LexTriangulator::extendTri(int yInd) {
 #if USE_CUDA == 1
     cudaHandles handles;
-    cuLexData data;
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
-    data.C = &C;
-    data.lenC = &lenC;
-    data.bitMask = &bitMask;
-    data.lenBitMask = &lenBitMask;
-    data.hypInds = &hyps;
-    data.lenHypInds = &lenHyps;
-    data.newTriInds = &fmHyps;
-    data.lenNewTriInds = &lenFmHyps;
-    data.nDelta = &nDelta;
-    data.lenNDelta = &lenNDelta;
-    cuLexExtendTri(data, handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
+    cuLexExtendTri(handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
             scriptyHLen, workspace, workspaceLen, yInd, n, d);
 #else
     LexData data;
@@ -334,35 +306,9 @@ void LexTriangulator::extendTri(int yInd) {
 void LexTriangulator::findNewHyp(int yInd) {
 #if USE_CUDA == 1
     cudaHandles handles;
-    cuFMData data;
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
-    data.C = &C;
-    data.lenC = &lenC;
-    data.D = &D;
-    data.lenD = &lenD;
-    data.S = &S;
-    data.lenS = &lenS;
-    data.U = &U;
-    data.lenU = &lenU;
-    data.V = &V;
-    data.lenV = &lenV;
-    data.newHyps = &newHyps;
-    data.lenNewHyps = &lenNewHyps;
-    data.hyps = &hyps;
-    data.lenHyps = &lenHyps;
-    data.numPts = &numPts;
-    data.lenNumPts = &lenNumPts;
-    data.fmHyps = &fmHyps;
-    data.lenFmHyps = &lenFmHyps;
-    data.info = &info;
-    data.lenInfo = &lenInfo;
-    data.bitMask = &bitMask;
-    data.lenBitMask = &lenBitMask;
-    data.hType = &hType;
-    data.lenHType = &lenHType;
-
-    cuFourierMotzkin(data, handles, d_x, &d_scriptyH, &scriptyHLen,
+    cuFourierMotzkin(handles, d_x, &d_scriptyH, &scriptyHLen,
                 &scriptyHCap, workspace, workspaceLen, yInd, n, d);
 #else
     // TODO Move this elsewhere

@@ -38,6 +38,37 @@ inline void checkCublasStatus(cublasStatus_t status, int line) {
     }
 }
 
+inline void cusolverPrintErrorString(cusolverStatus_t status) {
+    switch(status) {
+        case CUSOLVER_STATUS_SUCCESS:
+            std::cout << "CUSOLVER_STATUS_SUCCESS\n";
+            break;
+        case CUSOLVER_STATUS_NOT_INITIALIZED:
+            std::cout << "CUSOLVER_STATUS_NOT_INITIALIZED\n";
+            break;
+        case CUSOLVER_STATUS_ALLOC_FAILED:
+            std::cout << "CUSOLVER_STATUS_ALLOC_FAILED\n";
+            break;
+        default:
+            std::cout << "Unknown Error\n";
+    }
+}
+
+inline void checkCusolverStatus(cusolverStatus_t status) {
+    if (status != CUSOLVER_STATUS_SUCCESS) {
+        printf("cuSolver API failed with status %d\n", status);
+        throw std::logic_error("cuSolver API failed");
+    }
+}
+
+inline void checkCusolverStatus(cusolverStatus_t status, int line) {
+    if (status != CUSOLVER_STATUS_SUCCESS) {
+        cusolverPrintErrorString(status);
+        printf("cuSolver API failed with status %d on line %d\n", status, line);
+        throw std::logic_error("cuSolver API failed");
+    }
+}
+
 enum class HyperplaneType {
     sP = 0,
     sN = 1,

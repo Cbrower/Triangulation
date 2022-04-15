@@ -11,6 +11,8 @@
 
 #include "cudaHelpers.hpp"
 
+const bool useApproxSVD = true;
+
 __global__ void computeHyperplanes1(double* C, double* scriptyH, int* sP, int* sN, 
                 const int sPLen, const int sNLen, const int yInd, const int d, double* newHyp);
 
@@ -65,27 +67,11 @@ T gpuMax(T* vec, const int N) {
     return *thrust::max_element(t_vec, t_vec + N);
 }
 
-inline void checkCudaStatus(cudaError_t status, int line) {
-    if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s on line %d in file: cudaHelpers.cu\n", 
-                status, cudaGetErrorString(status), line);
-        throw std::logic_error("cuda API failed");
-    }
-    return error;
-}
-
-inline void checkCusolverStatus(cusolverStatus_t status) {
-    if (status != CUSOLVER_STATUS_SUCCESS) {
-        printf("cuSolver API failed with status %d\n", status);
-        throw std::logic_error("cuSolver API failed");
-    }
-}
-
 // TODO Check CUDA Status
 void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, 
                 int* scriptyHLen, int* scriptyHCap, double* workspace, 
                 const int workspaceLen, const int yInd, const int n, const int d) {
-    const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
+    const double TOLERANCE = sqrt(std::numeric_limits<float>::epsilon());
     const int numHyperplanes = (*scriptyHLen)/d;
     const int iLenPart = 1024;
     const int iLenFM = 32;
@@ -150,10 +136,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     assert(sPLen + sLLen + sNLen == numHyperplanes);
 
     // Free now unneeded memory
-    /*
-       TODO Delete After Verification
     checkCudaStatus(cudaFree(hType), __LINE__);
-    */
 
     // Point to the proper spots in memory for sP, sN, and sL
     sP = hyps;
@@ -199,8 +182,12 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     countNumIntersects<<<grid, block>>>(D, numPts, bitMask, sPLen*sNLen, yInd+1, d, TOLERANCE);
     checkCudaStatus(cudaGetLastError(), __LINE__);
     maxNPts = gpuMax(numPts, sPLen*sNLen);
-    if (maxNPts <= d) {
-        maxNPts = d+1;
+    if (useApproxSVD) {
+        if (maxNPts <= d) {
+            maxNPts = d+1;
+        }
+    } else {
+        assert(maxNPts < 32);
     }
 
     // Partition elements that have at least d-1 points they touch from the rest.
@@ -230,14 +217,25 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     double *U;
     double *V;
 
-    checkCudaStatus(cudaMalloc((void **)&S, 
-                sizeof(double)*initNumBatches*minMN), __LINE__);
-    checkCudaStatus(cudaMalloc((void **)&info,
-                sizeof(int)*initNumBatches), __LINE__);
-    checkCudaStatus(cudaMalloc((void**)&U,
-                sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
-    checkCudaStatus(cudaMalloc((void**)&V,
-                sizeof(double)*initNumBatches*d*d), __LINE__);
+    if (useApproxSVD) {
+        checkCudaStatus(cudaMalloc((void **)&S, 
+                    sizeof(double)*initNumBatches*minMN), __LINE__);
+        checkCudaStatus(cudaMalloc((void **)&info,
+                    sizeof(int)*initNumBatches), __LINE__);
+        checkCudaStatus(cudaMalloc((void**)&U,
+                    sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
+        checkCudaStatus(cudaMalloc((void**)&V,
+                    sizeof(double)*initNumBatches*d*d), __LINE__);
+    } else {
+        checkCudaStatus(cudaMalloc((void **)&S, 
+                    sizeof(double)*initNumBatches*minMN), __LINE__);
+        checkCudaStatus(cudaMalloc((void **)&info,
+                    sizeof(int)*initNumBatches), __LINE__);
+        checkCudaStatus(cudaMalloc((void**)&U,
+                    sizeof(double)*initNumBatches*d*d), __LINE__);
+        checkCudaStatus(cudaMalloc((void**)&V,
+                    sizeof(double)*initNumBatches*maxNPts*maxNPts), __LINE__);
+    }
 
 #if VERBOSE == 1
     std::cout << "MaxNPts = " << maxNPts << "\n";
@@ -256,7 +254,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
         grid.y = 1;
         // TODO Ensure batchSize is the correct argument
         loadHypData<<<grid, block, maxNPts*block.x*sizeof(int)>>>(workspace, x, D, fmHyps, 
-                offset, workspaceLen, maxNPts, batchSize, yInd+1, d, TOLERANCE, true);
+                offset, workspaceLen, maxNPts, batchSize, yInd+1, d, TOLERANCE, useApproxSVD);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
@@ -280,15 +278,60 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
 #endif
 
         // Call cuSolver to get svd
-        gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V);
-        checkCudaStatus(cudaGetLastError(), __LINE__);
-        checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+        if (useApproxSVD) {
+            checkCusolverStatus(gpuBatchedGetApproxSingularVals(handles.dnHandle, workspace, S, info, maxNPts, d, batchSize, U, V));
+        } else {
+            checkCusolverStatus(gpuBatchedGetSingularVals(handles.dnHandle, workspace, S, info, d, maxNPts, batchSize, U, V));
+        }
+
+#if VERBOSE == 1
+        {
+            int *buf = new int[batchSize];
+            checkCudaStatus(cudaMemcpy(buf, info, sizeof(int)*batchSize, cudaMemcpyDeviceToHost), __LINE__);
+            std::cout << "Info:\n";
+            for (int i = 0; i < batchSize; i++) {
+                std::cout << buf[i] << " ";
+            }
+            std::cout << "\n";
+            delete[] buf;
+        }
+#endif
+
+#if VERBOSE == 1
+        {
+            double *buf = new double[batchSize*d];
+            checkCudaStatus(cudaMemcpy(buf, S, sizeof(double)*batchSize*minMN, cudaMemcpyDeviceToHost), __LINE__);
+            std::cout << "singular vals:\n";
+            for (int i = 0; i < batchSize; i++) {
+                for (int j = 0; j < minMN; j++) {
+                    std::cout << buf[i*minMN + j] << " ";
+                }
+                std::cout << "\n";
+            }
+            std::cout << "\n";
+            delete[] buf;
+        }
+#endif
+
+#if VERBOSE == 1
+        {
+            bool *buf = new bool[sPLen*sNLen];
+            checkCudaStatus(cudaMemcpy(buf, bitMask, sizeof(bool)*sPLen*sNLen, cudaMemcpyDeviceToHost), __LINE__);
+            std::cout << "bitMask before:\n";
+            for (int i = 0; i < sPLen*sNLen; i++) {
+                std::cout << buf[i] << " ";
+            }
+            std::cout << "\n";
+            delete[] buf;
+        }
+#endif
 
         // CUDA Kernel to update bitmask
         // NOTE prior block and grid dimensions work for this kernel
         checkSingularVals<<<grid, block>>>(info, S, bitMask, batchSize, offset, minMN, d, TOLERANCE);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+
 #if VERBOSE == 1
         {
             bool *buf = new bool[sPLen*sNLen];
@@ -430,7 +473,7 @@ __global__ void countNumIntersects(double* D, int* numPts, bool* mask, const int
             count += (int)(abs(D[i*nPts + j]) < tol);
         }
         numPts[i] = count;
-        mask[i] = count < d - 1;
+        mask[i] = count < (d - 1);
     }
 }
 
@@ -466,10 +509,19 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
     }
 
     // Part 3 Do the copy
-    for (i = 0; i < maxNPts; i++)  {
-        for (j = 0; j < d; j++) {
-            workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * 
-                x[inds[i*stride + threadIdx.x]*d + j];
+    if (trans) {
+        for (i = 0; i < d; i++) {
+            for (j = 0; j < maxNPts; j++) {
+                workspace[idx*maxNPts*d + i*maxNPts + j] = (int)(j < counter) *
+                    x[inds[j*stride + threadIdx.x]*d + i];
+            }
+        }
+    } else {
+        for (i = 0; i < maxNPts; i++)  {
+            for (j = 0; j < d; j++) {
+                workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * 
+                    x[inds[i*stride + threadIdx.x]*d + j];
+            }
         }
     }
 }
@@ -484,6 +536,7 @@ __global__ void checkSingularVals(const int* info, const double* S, bool* mask,
         return;
     }
 
+    cnt = 0;
     for (int i = 0; i < minMN; i++) {
         cnt += (int)(abs(S[tid*minMN + i]) >= tol);
     }
@@ -737,7 +790,7 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
                 cnt += val;
             }
 
-            val = cnt < d - 1;
+            val = cnt < (d - 1);
             nDeltas[offset + d-1] = (!val)*yInd;
             bitMask[tid_x*numTris + tid_y] = val;
         }

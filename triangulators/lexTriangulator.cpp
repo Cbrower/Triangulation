@@ -53,43 +53,8 @@ void LexTriangulator::computeTri() {
     piv = new int[d];
 
     // -- Set Initial Values For FM and Triangulation Vars
-    // Common Vars
     C = nullptr; 
     lenC = 0;
-    D = nullptr;
-    lenD = 0;
-    newHyps = nullptr;
-    lenNewHyps = 0;
-    S = nullptr;
-    lenS = 0;
-#if USE_CUDA == 1
-    // CUDA Vars
-    U = nullptr;
-    lenU = 0;
-    V = nullptr;
-    lenV = 0;
-    hyps = nullptr;
-    lenHyps = 0;
-    numPts = nullptr;
-    lenNumPts = 0;
-    fmHyps = nullptr;
-    lenFmHyps = 0;
-    info = nullptr;
-    lenInfo = 0;
-    bitMask = nullptr;
-    lenBitMask = 0;
-    hType = nullptr;
-    lenHType = 0;
-    nDelta = nullptr;
-    lenNDelta = 0;
-#else
-    // CPU Only Vars
-    A = nullptr;
-    lenA = 0;
-    work = nullptr;
-    lenWork = 0;
-#endif
-
     scriptyHCap = d*n; // Starting size of scriptyH
     scriptyHLen = 0;
     scriptyH = new double[scriptyHCap];
@@ -195,112 +160,17 @@ void LexTriangulator::computeTri() {
     // Free memory
 #if USE_CUDA == 1
     if (C != nullptr) {
-        std::cout << "Freeing C\n";
         cudaFree(C);
     }
-    if (D != nullptr) {
-        std::cout << "Freeing D\n";
-        cudaFree(D);
-    }
-    if (S != nullptr) {
-        std::cout << "Freeing S\n";
-        cudaFree(S);
-    }
-    if (newHyps != nullptr) {
-        std::cout << "Freeing newHyps\n";
-        cudaFree(newHyps);
-    }
-    if (U != nullptr) {
-        std::cout << "Freeing U\n";
-        cudaFree(U);
-    }
-    if (V != nullptr) {
-        std::cout << "Freeing V\n";
-        cudaFree(V);
-    }
-    if (hyps != nullptr) {
-        std::cout << "Freeing hyps\n";
-        cudaFree(hyps);
-    }
-    if (numPts != nullptr) {
-        std::cout << "Freeing numPts\n";
-        cudaFree(numPts);
-    }
-    if (fmHyps != nullptr) { 
-        std::cout << "Freeing fmHyps\n";
-        cudaFree(fmHyps);
-    }
-    if (info != nullptr) {
-        std::cout << "Freeing info\n";
-        cudaFree(info);
-    }
-    if (bitMask != nullptr) {
-        std::cout << "Freeing bitMask\n";
-        cudaFree(bitMask);
-    }
-    if (hType != nullptr) {
-        std::cout << "Freeing hType\n";
-        cudaFree(hType);
-    }
-    if (nDelta != nullptr) {
-        std::cout << "Freeing nDelta\n";
-        cudaFree(nDelta);
-    }
 #else
-    if (A != nullptr) {
-        delete[] A;
-    }
     if (C != nullptr) {
         delete[] C;
-    }
-    if (D != nullptr) {
-        delete[] D;
-    }
-    if (newHyps != nullptr) {
-        delete[] newHyps;
-    }
-    if (S != nullptr) {
-        delete[] S;
-    }
-    if (work != nullptr) {
-        delete[] work;
     }
 #endif
 
     // Set lengths to zero and pointers to null pointers
     C = nullptr;
     lenC = 0;
-    D = nullptr;
-    lenD = 0;
-    newHyps = nullptr;
-    lenNewHyps = 0;
-    S = nullptr;
-    lenS = 0;
-#if USE_CUDA == 1
-    U = nullptr;
-    lenU = 0;
-    V = nullptr;
-    lenV = 0;
-    hyps = nullptr;
-    lenHyps = 0;
-    numPts = nullptr;
-    lenNumPts = 0;
-    fmHyps = nullptr;
-    lenFmHyps = 0;
-    info = nullptr;
-    lenInfo = 0;
-    bitMask = nullptr;
-    lenBitMask = 0;
-    hType = nullptr;
-    lenHType = 0;
-    nDelta = nullptr;
-    lenNDelta = 0;
-#else
-    A = nullptr;
-    lenA = 0;
-    work = nullptr;
-    lenWork = 0;
-#endif
 }
 
 void LexTriangulator::extendTri(int yInd) {
@@ -311,11 +181,7 @@ void LexTriangulator::extendTri(int yInd) {
     cuLexExtendTri(handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
             scriptyHLen, workspace, workspaceLen, &C, &lenC, yInd, n, d);
 #else
-    LexData data;
-    data.C = &C;
-    data.lenC = &lenC;
-    lexExtendTri(data, x, delta, scriptyH, 
-            scriptyHLen, yInd, n, d);
+    lexExtendTri(x, delta, scriptyH, scriptyHLen, &C, &lenC, yInd, n, d);
 #endif
 }
 
@@ -331,21 +197,9 @@ void LexTriangulator::findNewHyp(int yInd) {
     C = nullptr;
     lenC = 0;
 #else
-    // TODO Move this elsewhere
-    FMData fmData;
-    fmData.A = &A;
-    fmData.lenA = &lenA;
-    fmData.C = &C;
-    fmData.lenC = &lenC;
-    fmData.D = &D;
-    fmData.lenD = &lenD;
-    fmData.S = &S;
-    fmData.lenS = &lenS;
-    fmData.work = &work;
-    fmData.lenWork = &lenWork;
-    fmData.newHyps = &newHyps;
-    fmData.lenNewHyps = &lenNewHyps;
-
-    fourierMotzkin(fmData, x, &scriptyH, &scriptyHLen, &scriptyHCap, yInd, n, d);
+    fourierMotzkin(x, &scriptyH, &scriptyHLen, &scriptyHCap, yInd, n, d, 1, C, lenC);
+    delete[] C;
+    C = nullptr;
+    lenC = 0;
 #endif
 }

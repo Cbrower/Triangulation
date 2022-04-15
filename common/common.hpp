@@ -29,33 +29,15 @@ extern "C" {
 int sortForLinIndependence(double *scriptyH, const int n, const int d);
 void sortForL1Norm(double* scriptyH, const int n, const int d);
 
-struct FMData{
-    double **A;
-    int *lenA;
-    double **C;
-    int *lenC;
-    double **D;
-    int *lenD;
-    double **S;
-    int *lenS;
-    double **newHyps;
-    int *lenNewHyps;
-    double **work;
-    int *lenWork;
-};
-
 // subject to change arguments
-void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen,
+void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
                 int* scriptyHCap, const int yInd, const int n, const int d, 
-                const int numThreads=1);
-struct LexData {
-    double **C;
-    int *lenC;
-};
+                const int numThreads=1, double *C=nullptr, int lenC=0);
 
-void lexExtendTri(LexData &data, double* x, std::vector<int> &delta,
+void lexExtendTri(double* x, std::vector<int> &delta,
         double* scriptyH, int scriptyHLen,
-        int yInd, int n, int d);
+        double** C, int* lenC, int yInd, 
+        int n, int d);
 
 
 template<typename T>

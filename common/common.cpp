@@ -125,23 +125,9 @@ void sortForL1Norm(double* scriptyH, const int n, const int d) {
     delete[] norms;
 }
 
-void reallocIfNeeded(double **data, int* len, const int expectedSize) {
-    int nSize;
-    if ((*len) < expectedSize) {
-        if ((*len) == 0) {
-            nSize = expectedSize;
-        } else {
-            nSize = ((int)(expectedSize / (*len)) + 1)*(*len);
-            delete[] (*data);
-        }
-        *data = new double[nSize];
-        *len = nSize;
-    }
-}
-
-void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen,
+void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
                 int* scriptyHCap, const int yInd, const int n, const int d, 
-                const int numThreads) {
+                const int numThreads, double *C, int CLen) {
     std::vector<int> sP;
     std::vector<int> sN;
     std::vector<int> sL;
@@ -149,6 +135,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     int j;
     int k;
     int scale;
+    bool computeC = true;
     // For old hyperplanes
     int origNumHyps;
     // For New Hyperplanes
@@ -170,28 +157,32 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // Data in the FMData pointer
     double *A;
     double *B;
-    double *C;
+    double *Cmat;
     double *D;
     double *S;
     double *newHyps;
     double *work;
     int lenA;
     int lenB;
-    int lenC;
     int lenD;
-    int lenNewHyps;
     int lenS;
     int lenWork;
 
-    // Ensure C is large enough
+    // Allocate C if needed
     origNumHyps = (*scriptyHLen)/d;
-    reallocIfNeeded(data.C, data.lenC, (yInd + 1)*origNumHyps);
-    C = *data.C;
-    lenC = *data.lenC;
+    if (C == nullptr) {
+        C = new double[(yInd + 1)*origNumHyps];
+    } else if (CLen < (yInd + 1)*origNumHyps) { 
+        throw std::logic_error("Invalid C supplied");
+    } else {
+        computeC = false;
+    }
 
     // Step 1: Conduct matrix product.  This multiplication tells if a point x_j is 
     // in the halfspace of a hyperplane scripyH_i.
-    cpuMatmul(x, *scriptyH, C, yInd + 1, origNumHyps, d, true, false);
+    if (computeC) {
+        cpuMatmul(x, *scriptyH, C, yInd + 1, origNumHyps, d, true, false);
+    }
 
 #if VERBOSE == 1
     std::cout << "Starting Fourier Motzkin Elimination: Iteration " << yInd - d << "\n";
@@ -234,9 +225,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     newHyps2 = new double[cap];
 
     // Ensure newHyp is large enough
-    reallocIfNeeded(data.newHyps, data.lenNewHyps, cap);
-    newHyps = *data.newHyps;
-    lenNewHyps = *data.lenNewHyps;
+    newHyps = new double[cap];
 
     // Step 3: Place the set builder notation elements from Theorem 7 of arxiv.0910.2845
     // into the newHyp array
@@ -262,10 +251,13 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     printMatrix(sP.size()*sN.size(), d, newHyps);
 #endif
 
+    // Free unneeded memory
+    if (computeC) {
+        delete[] C;
+    }
+
     // Allocate Matrix D
-    reallocIfNeeded(data.D, data.lenD, (yInd + 1)*len/d);
-    D = *data.D;
-    lenD = *data.lenD;
+    D = new double[(yInd + 1)*len/d];
  
     // Step 4: Conduct another matrix product.  This multiplication tells 
     // us if a point x_j is in the halfspace of a hyperplane scripyH_i.
@@ -281,33 +273,23 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     // Step 5: Remove unneeded hyperplanes
 
     // Ensure A, S, and work are large enough
-    reallocIfNeeded(data.S, data.lenS, d);
-    reallocIfNeeded(data.work, data.lenWork, 5*d);
-    S = *data.S;
-    work = *data.work;
-    lenS = *data.lenS;
-    lenWork = *data.lenWork;
+    S = new double[d];
+    work = new double[5*d];
+    A = new double[d*d];
 
-    reallocIfNeeded(data.A, data.lenA, d*d);
-    A = *data.A;
-    lenA = *data.lenA;
-    rowsA = lenA/d;
+    rowsA = d;
     for (i = 0; i < newNumHyps; i++) {
         count = 0;
         for (j = 0; j < yInd + 1; j++) {
             if (fabs(D[i*(yInd + 1) + j]) < TOLERANCE) {
                 if (count >= rowsA) {
                     // Increase the size of A and copy data over
-                    tmpA = new double[2*rowsA*d];
-                    
+                    tmpA = new double[2*rowsA*d]; 
                     std::copy(A, A+rowsA*d, tmpA);
                     rowsA *= 2;
 
                     delete[] A;
-                    *data.A = tmpA;
-                    *data.lenA = rowsA*d;
-                    A = *data.A;;
-                    lenA = *data.lenA;
+                    A = tmpA;
                     tmpA = nullptr;
                 }
                 std::copy(x+j*d, x+(j+1)*d, A+count*d); 
@@ -339,6 +321,12 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
         }
     }
 
+    // Delete unneeded memory
+    delete[] A;
+    delete[] D;
+    delete[] S;
+    delete[] work;
+
     // sort toRemove for removing unimportant hyperplanes
     std::sort(toRemove.begin(), toRemove.end());
 
@@ -355,6 +343,7 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
         nLen += d;
     }
 
+    delete[] newHyps;
     newHyps = newHyps2;
     newHyps2 = nullptr;
     len = nLen;
@@ -416,33 +405,34 @@ void fourierMotzkin(FMData &data, double* x, double** scriptyH, int* scriptyHLen
     *scriptyHCap = cap;
 }
 
-void lexExtendTri(LexData &data, double* x, std::vector<int> &delta, 
+void lexExtendTri(double* x, std::vector<int> &delta, 
         double* scriptyH, int scriptyHLen,
+        double** C, int *CLen,
         int yInd, int n, const int d) {
     // common
+    double *Cmat;
     std::vector<int> indTracker;
-    double *p;
-    double *C;
 
     // Reallocate data if needed
-    reallocIfNeeded(data.C, data.lenC, (scriptyHLen/d)*(yInd + 1));
+    *C = new double[(scriptyHLen/d)*(yInd + 1)];
+    *CLen = (scriptyHLen/d)*(yInd + 1);
+    Cmat = *C;
 
     // setting values for the computation of \sigma \cap H
-    C = *data.C;
-    cpuMatmul(x, scriptyH, C, yInd+1, scriptyHLen/d, d, true, false);
+    cpuMatmul(x, scriptyH, Cmat, yInd+1, scriptyHLen/d, d, true, false);
 
     // Can be parallelized
     int oDeltaLen = delta.size()/d;
     indTracker.reserve(d);
     for (int ih = 0;  ih < scriptyHLen/d; ih++) {
-        if (C[ih*(yInd + 1) + yInd] > -TOLERANCE) {
+        if (Cmat[ih*(yInd + 1) + yInd] > -TOLERANCE) {
             continue;
         }
 
         for (int id = 0; id < oDeltaLen; id++) {
             indTracker.clear();
             for (int is = 0; is < d; is++) {
-                if (fabs(C[ih*(yInd + 1) + delta[id*d + is]]) < TOLERANCE) {
+                if (fabs(Cmat[ih*(yInd + 1) + delta[id*d + is]]) < TOLERANCE) {
                     indTracker.push_back(delta[id*d + is]);
                 }
             }

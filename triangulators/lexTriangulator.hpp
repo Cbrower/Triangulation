@@ -92,38 +92,9 @@ class LexTriangulator : public Triangulator {
         // Memory for both CUDA and CPU implementation
         double *C;
         int lenC;
-        double *D;
-        int lenD;
-        double *S;
-        int lenS;
-        double *newHyps;
-        int lenNewHyps; 
 #if USE_CUDA == 1
         double *workspace;
         int workspaceLen;
-        double *U;
-        int lenU;
-        double *V;
-        int lenV;
-        int *hyps;
-        int lenHyps;
-        int *numPts;
-        int lenNumPts;
-        int *fmHyps;
-        int lenFmHyps;
-        int *info;
-        int lenInfo;
-        bool *bitMask;
-        int lenBitMask;
-        HyperplaneType *hType;
-        int lenHType;
-        int *nDelta;
-        int lenNDelta;
-#else
-        double *A; // 2*d*d
-        int lenA;
-        double *work; // 5*d
-        int lenWork; // May not need this since it will never change
 #endif
 };
 

@@ -70,11 +70,13 @@ T gpuMax(T* vec, const int N) {
 // TODO Check CUDA Status
 void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, 
                 int* scriptyHLen, int* scriptyHCap, double* workspace, 
-                const int workspaceLen, const int yInd, const int n, const int d) {
+                const int workspaceLen, const int yInd, const int n, const int d,
+                double* C, int CLen) {
     const double TOLERANCE = sqrt(std::numeric_limits<float>::epsilon());
     const int numHyperplanes = (*scriptyHLen)/d;
     const int iLenPart = 1024;
     const int iLenFM = 32;
+    bool computeC = true;
     int *numPts;
     int *hyps;
     int *sN;
@@ -88,7 +90,6 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     int fmHypsLen;
     bool* bitMask;
     double *newHyps;
-    double *C;
     double *D;
     dim3 block;
     dim3 grid;
@@ -99,8 +100,14 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
 #endif
 
     // Allocate Data
-    checkCudaStatus(cudaMalloc((void **)&C, 
-                sizeof(double)*(yInd + 1)*numHyperplanes), __LINE__);
+    if (C == nullptr) {
+        checkCudaStatus(cudaMalloc((void **)&C, 
+                    sizeof(double)*(yInd + 1)*numHyperplanes), __LINE__);
+    } else if (CLen < (yInd + 1)*numHyperplanes) { 
+        throw std::logic_error("Invalid C supplied");
+    } else {
+        computeC = false;
+    }
     checkCudaStatus(cudaMalloc((void **)&hType, 
                 sizeof(HyperplaneType)*numHyperplanes), __LINE__);
     checkCudaStatus(cudaMalloc((void **)&hyps,
@@ -111,8 +118,26 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     thrust::sequence(thrust::device, hyps, hyps + numHyperplanes, 0);
 
     // Conduct the matrix multiplication
-    gpuMatmul(handles.ltHandle, x, *scriptyH, C, yInd + 1, numHyperplanes, d, 
-                    true, false, workspace, workspaceLen*sizeof(double));
+    if (computeC) {
+        gpuMatmul(handles.ltHandle, x, *scriptyH, C, yInd + 1, numHyperplanes, d, 
+                        true, false, workspace, workspaceLen*sizeof(double));
+    }
+
+#if VERBOSE == 1
+    {
+        double *buf = new double[numHyperplanes*(yInd + 1)];
+        cudaMemcpy(buf, C, sizeof(double)*numHyperplanes*(yInd + 1), cudaMemcpyDeviceToHost);
+
+        std::cout << "C:\n";
+        for (int i = 0; i < numHyperplanes; i++) {
+            for (int j = 0; j < yInd + 1; j++) {
+                std::cout << buf[i*(yInd + 1) + j] << " ";
+            }
+            std::cout << "\n";
+        }
+        delete[] buf;
+    }
+#endif
 
     // Setup grid and block dimensions for partitioning
     block.x = iLenPart;
@@ -160,7 +185,9 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
     // Free no longer needed memory
-    checkCudaStatus(cudaFree(C), __LINE__);
+    if (computeC) {
+        checkCudaStatus(cudaFree(C), __LINE__);
+    }
 
     // Run matrix multiplication of the newHyperplanes
     checkCudaStatus(
@@ -238,6 +265,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     }
 
 #if VERBOSE == 1
+    int cnt = 0;
     std::cout << "MaxNPts = " << maxNPts << "\n";
     std::cout << "sPLen = " << sPLen << "\n";
     std::cout << "sNLen = " << sNLen << "\n";
@@ -246,6 +274,9 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     std::cout << "minMN = " << minMN << "\n";
 #endif
     while (batchesLeft > 0) {
+#if VERBOSE == 1
+        cnt += 1;
+#endif
         batchSize = min(batchesLeft, numBatchesPerIt);
         // CUDA Kernel To Prepare Workspace
         block.x = iLenFM; // TODO Maybe change
@@ -348,6 +379,16 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
         batchesLeft -= batchSize;
         offset += batchSize;
     }
+
+#if VERBOSE == 1
+    std::cout << "Hyperplane reduction took " << cnt << " iterations\n";
+#endif
+
+    // Free Unneeded Memory
+    cudaFree(S);
+    cudaFree(info);
+    cudaFree(U);
+    cudaFree(V);
 
     // Sort based on bitMask
     gpuSortVecs(fmHyps, bitMask, sPLen*sNLen);
@@ -581,7 +622,8 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
 
 void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
         int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
-        const int workspaceLen, const int yInd, const int n, const int d) { 
+        const int workspaceLen, double **C, int* CLen, const int yInd, const int n, 
+        const int d) { 
     // common
     const int numHyps = scriptyHLen / d;
     const int oNumTris = *numTris;
@@ -591,7 +633,6 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     int numNewTris;
     dim3 grid;
     dim3 block;
-    double *C;
     int *iWorkspace = reinterpret_cast<int *>(workspace);
     int *hypInds;
     int *nDelta;
@@ -599,19 +640,21 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     bool *bitMask;
 
     // Allocate Data
-    cudaMalloc((void **)&C, sizeof(double)*numHyps*(yInd + 1));
+    cudaMalloc((void **)C, sizeof(double)*numHyps*(yInd + 1));
     cudaMalloc((void **)&bitMask, sizeof(bool)*numHyps);
     cudaMalloc((void **)&hypInds, sizeof(int)*numHyps);
 
+    *CLen = numHyps*(yInd + 1);
+
     // setting values for the computation of \sigma \cap H
     checkCublasStatus(
-        gpuMatmul(handles.ltHandle, x, scriptyH, C, yInd + 1, numHyps, d, true, false,
+        gpuMatmul(handles.ltHandle, x, scriptyH, *C, yInd + 1, numHyps, d, true, false,
             workspace, workspaceLen*sizeof(double)),
         __LINE__);
 #if VERBOSE == 1
     {
         double *buf = new double[numHyps*(yInd + 1)];
-        cudaMemcpy(buf, C, sizeof(double)*numHyps*(yInd + 1), cudaMemcpyDeviceToHost);
+        cudaMemcpy(buf, *C, sizeof(double)*numHyps*(yInd + 1), cudaMemcpyDeviceToHost);
 
         std::cout << "C:\n";
         for (int i = 0; i < numHyps; i++) {
@@ -631,7 +674,7 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     // building new triangulations
     block.x = 256;
     grid.x = (numHyps + block.x - 1) / block.x;
-    findScriptyHLessThanY<<<grid, block>>>(bitMask, C, numHyps, yInd + 1, yInd, TOLERANCE);
+    findScriptyHLessThanY<<<grid, block>>>(bitMask, *C, numHyps, yInd + 1, yInd, TOLERANCE);
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 #if VERBOSE == 1
@@ -675,19 +718,18 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
 
     // Prep necessary data
     if (numHyps < numValidHyps*oNumTris) {
-        cudaFree(bitMask);
-        cudaMalloc((void **)&bitMask, sizeof(bool)*numValidHyps*oNumTris);
+        checkCudaStatus(cudaFree(bitMask), __LINE__);
+        checkCudaStatus(cudaMalloc((void **)&bitMask, sizeof(bool)*numValidHyps*oNumTris), __LINE__);
     }
-    cudaMalloc((void **)&newTriInds, sizeof(int)*numValidHyps*oNumTris);
+    checkCudaStatus(cudaMalloc((void **)&newTriInds, sizeof(int)*numValidHyps*oNumTris), __LINE__);
 
     thrust::sequence(thrust::device, newTriInds, newTriInds + numValidHyps*oNumTris, 0);
 
     // If the assert does not pass, we will likely be out of memory anyways because
     // the workspace should grap as much memory as possible.
-    if (workspaceLen*(sizeof(double)/sizeof(int)) < numValidHyps*oNumTris*d) {
+    if (workspaceLen*sizeof(double) < sizeof(int)*numValidHyps*oNumTris*d) {
         workspaceUsed = false;
-        checkCudaStatus(cudaMalloc((void **)&iWorkspace, sizeof(int)*numValidHyps*oNumTris*d), 
-                __LINE__);
+        checkCudaStatus(cudaMalloc((void **)&iWorkspace, sizeof(int)*numValidHyps*oNumTris*d), __LINE__);
     }
 
     // Generate the data 
@@ -695,7 +737,7 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     block.y = 16;
     grid.x = (numValidHyps + block.x - 1) / block.x;
     grid.y = (oNumTris + block.y - 1) / block.y;
-    findNewTris<<<grid, block>>>(iWorkspace, bitMask, hypInds, numValidHyps, C, yInd+1, yInd, 
+    findNewTris<<<grid, block>>>(iWorkspace, bitMask, hypInds, numValidHyps, *C, yInd+1, yInd, 
             *delta, oNumTris, d, TOLERANCE);
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
@@ -753,7 +795,6 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
         cudaFree(iWorkspace);
     }
     *numTris = oNumTris + numNewTris;
-    cudaFree(C); // TODO Don't free, pass it out of the function for FM
     cudaFree(bitMask);
     cudaFree(hypInds);
     cudaFree(newTriInds);
@@ -773,8 +814,8 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
         const int* delta, const int numTris, const int d, const double tol) {
     const int tid_x = blockDim.x * blockIdx.x + threadIdx.x;
     const int tid_y = blockDim.y * blockIdx.y + threadIdx.y;
-    int offset;
-    int cnt;
+    size_t offset;
+    size_t cnt;
     int deltaIdx;
     int val;
 
@@ -786,7 +827,7 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
             for (int is = 0; is < d; is++) {
                 deltaIdx = delta[id*d + is];
                 val = (fabs(C[validHyps[ih]*numCols + deltaIdx]) < tol);
-                nDeltas[offset + cnt] = deltaIdx;
+                nDeltas[offset + cnt] = deltaIdx; // TODO Something is wrong here
                 cnt += val;
             }
 

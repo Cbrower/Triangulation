@@ -83,11 +83,13 @@ struct cudaHandles {
 // subject to change arguments
 void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH, 
                 int* scriptyHLen, int* scriptyHCap, double* workspace, 
-                const int workspaceLen, const int yInd, const int n, const int d);
+                const int workspaceLen, const int yInd, const int n, const int d,
+                double* C=nullptr, int CLen=0);
 
 void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
         int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
-        const int workspaceLen, const int yInd, const int n, const int d);
+        const int workspaceLen, double **C, int* CLen, const int yInd, const int n, 
+        const int d);
 
 // Matmul
 // Conducts a matrix multiplication using cublasLt.

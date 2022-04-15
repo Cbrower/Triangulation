@@ -54,9 +54,6 @@ class LexTriangulator : public Triangulator {
             // TODO Destroy cuSolverDn handle and the steam it is bound to.
             cublasStatus_t status;
 
-            if (scriptyH != nullptr) {
-                cudaFree(scriptyH);
-            }
             status = cublasLtDestroy(ltHandle);
             status = cublasDestroy(cblsHandle);
 

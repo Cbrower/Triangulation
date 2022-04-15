@@ -80,6 +80,8 @@ void LexTriangulator::computeTri() {
     lenBitMask = 0;
     hType = nullptr;
     lenHType = 0;
+    nDelta = nullptr;
+    lenNDelta = 0;
 #else
     // CPU Only Vars
     A = nullptr;
@@ -182,6 +184,7 @@ void LexTriangulator::computeTri() {
     delete[] tmpDelta;
     cudaFree(workspace);
     cudaFree(d_delta);
+    cudaFree(d_scriptyH);
 #endif
 
     lexSort(scriptyH, scriptyHLen/d, d);
@@ -192,42 +195,55 @@ void LexTriangulator::computeTri() {
     // Free memory
 #if USE_CUDA == 1
     if (C != nullptr) {
+        std::cout << "Freeing C\n";
         cudaFree(C);
     }
     if (D != nullptr) {
+        std::cout << "Freeing D\n";
         cudaFree(D);
     }
     if (S != nullptr) {
+        std::cout << "Freeing S\n";
         cudaFree(S);
     }
     if (newHyps != nullptr) {
+        std::cout << "Freeing newHyps\n";
         cudaFree(newHyps);
     }
     if (U != nullptr) {
+        std::cout << "Freeing U\n";
         cudaFree(U);
     }
     if (V != nullptr) {
+        std::cout << "Freeing V\n";
         cudaFree(V);
     }
     if (hyps != nullptr) {
+        std::cout << "Freeing hyps\n";
         cudaFree(hyps);
     }
     if (numPts != nullptr) {
+        std::cout << "Freeing numPts\n";
         cudaFree(numPts);
     }
-    if (fmHyps != nullptr) {
+    if (fmHyps != nullptr) { 
+        std::cout << "Freeing fmHyps\n";
         cudaFree(fmHyps);
     }
     if (info != nullptr) {
+        std::cout << "Freeing info\n";
         cudaFree(info);
     }
     if (bitMask != nullptr) {
+        std::cout << "Freeing bitMask\n";
         cudaFree(bitMask);
     }
     if (hType != nullptr) {
+        std::cout << "Freeing hType\n";
         cudaFree(hType);
     }
     if (nDelta != nullptr) {
+        std::cout << "Freeing nDelta\n";
         cudaFree(nDelta);
     }
 #else
@@ -293,7 +309,7 @@ void LexTriangulator::extendTri(int yInd) {
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
     cuLexExtendTri(handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
-            scriptyHLen, workspace, workspaceLen, yInd, n, d);
+            scriptyHLen, workspace, workspaceLen, &C, &lenC, yInd, n, d);
 #else
     LexData data;
     data.C = &C;
@@ -309,7 +325,11 @@ void LexTriangulator::findNewHyp(int yInd) {
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
     cuFourierMotzkin(handles, d_x, &d_scriptyH, &scriptyHLen,
-                &scriptyHCap, workspace, workspaceLen, yInd, n, d);
+                &scriptyHCap, workspace, workspaceLen, yInd, n, d, C, lenC);
+    // Free memory shared between cuLexExtendTri and cuFourierMotzkin
+    cudaFree(C);
+    C = nullptr;
+    lenC = 0;
 #else
     // TODO Move this elsewhere
     FMData fmData;

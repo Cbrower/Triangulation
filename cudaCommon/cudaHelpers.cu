@@ -168,6 +168,43 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     sN = hyps + sPLen;
     sL = sN + sNLen;
 
+    if (sPLen == 0 || sNLen == 0) { // We do not need to generate candidate hyperplanes anymore
+        double *nScriptyH;
+
+        assert((sPLen + sLLen) > 0); // It cannot be possible for sPLen and sLLen to be zero
+        checkCudaStatus(cudaMalloc((void **)&nScriptyH,
+                    sizeof(double)*d*(sPLen + sLLen)), __LINE__);
+
+        // Copy SP
+        if (sPLen > 0) {
+            block.x = iLenFM; // TODO Maybe change
+            block.y = 1;
+            grid.x = (sPLen + block.x - 1)/block.x;
+            grid.y = 1;
+            mappedCopyHyperplanes<<<grid, block>>>(nScriptyH, *scriptyH, sPLen, d, sP);
+            checkCudaStatus(cudaGetLastError(), __LINE__);
+            checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+        }
+        // Copy sL
+        if (sLLen > 0) {
+            block.x = iLenFM; // TODO change
+            block.y = 1;
+            grid.x = (sLLen + block.x - 1)/block.x;
+            grid.y = 1;
+            mappedCopyHyperplanes<<<grid, block>>>(nScriptyH + sPLen*d, *scriptyH, sLLen, d, sL);
+            checkCudaStatus(cudaGetLastError(), __LINE__);
+            checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
+        }
+
+        // Update scriptyH
+        cudaFree(hyps);
+        cudaFree(*scriptyH);
+        *scriptyH = nScriptyH;
+        *scriptyHLen = d*sLLen;
+        *scriptyHCap = *scriptyHLen;
+        return;
+    }
+
     // Generate the new block and grid dimensions
     // The x dimension is for sP and the y is for sN
     block.x = iLenFM;
@@ -620,7 +657,7 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
         const int lenValidHyps, const double *C, const int numCols, const int yInd,
         const int* delta, const int numTris, const int d, const double tol);
 
-void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
+bool cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris, 
         int *deltaCap, double* scriptyH, int scriptyHLen, double* workspace, 
         const int workspaceLen, double **C, int* CLen, const int yInd, const int n, 
         const int d) { 
@@ -695,6 +732,12 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     numValidHyps = gpuFindFirst(bitMask, true, numHyps);
     if (numValidHyps == -1) {
         numValidHyps = numHyps;
+    } else if (numValidHyps == 0) {
+        cudaFree(bitMask);
+        cudaFree(hypInds);
+        cudaFree(*C);
+        *C = nullptr;
+        return true;
     }
 
 #if VERBOSE == 1
@@ -798,6 +841,8 @@ void cuLexExtendTri(cudaHandles handles, double* x, int** delta, int *numTris,
     cudaFree(bitMask);
     cudaFree(hypInds);
     cudaFree(newTriInds);
+
+    return false;
 }
 
 __global__ void findScriptyHLessThanY(bool* bitMask, const double* C, 

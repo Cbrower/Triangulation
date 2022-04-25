@@ -5,6 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <vector>
+#include <sys/time.h>
 
 extern "C" {
     void dgemm_(char* transA, char* transB, int* m, int* n, int* k, double* alpha, double* A, int* lda, double* B, int* ldb, double* beta, double* C, int* ldc);
@@ -34,7 +35,8 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
                 int* scriptyHCap, const int yInd, const int n, const int d, 
                 const int numThreads=1, double *C=nullptr, int lenC=0);
 
-void lexExtendTri(double* x, std::vector<int> &delta,
+// returns whether or not yInd is in the interior of the current cone
+bool lexExtendTri(double* x, std::vector<int> &delta,
         double* scriptyH, int scriptyHLen,
         double** C, int* lenC, int yInd, 
         int n, int d);
@@ -123,6 +125,12 @@ int cpuSingularValues(T *A, T *S, int m, int n, T *work, int lwork) {
     }
 
     return info;
+}
+
+inline double cpuSeconds() {
+    struct timeval tp;
+    gettimeofday(&tp, NULL);
+    return ((double)tp.tv_sec + (double)tp.tv_usec*1.e-6);
 }
 
 #endif //_COMMON_HPP

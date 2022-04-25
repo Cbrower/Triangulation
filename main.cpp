@@ -61,10 +61,11 @@ int main(int argc, char** argv) {
     int n;
     int d;
     int numThreads;
-    double elaps;
+    double elaps_init;
+    double elaps_wout;
     char *filename;
     std::vector<double> x;
-    struct timeval start, end;
+    struct timeval start_init, start_post, end;
     LexTriangulator *tri;
 
     if (argc > 1) {
@@ -87,13 +88,15 @@ int main(int argc, char** argv) {
     // Sort for linear independence
     sortForLinIndependence(x.data(), n, d);
 
-    gettimeofday(&start, NULL);
+    gettimeofday(&start_init, NULL);
     tri = new LexTriangulator(x.data(), n, d);
+    gettimeofday(&start_post, NULL);
     tri->setNumberOfThreads(numThreads);
     tri->computeTri();
     gettimeofday(&end, NULL);
 
-    elaps  = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
+    elaps_init = ((end.tv_sec - start_init.tv_sec) + (end.tv_usec - start_init.tv_usec)/1e6);
+    elaps_wout = ((end.tv_sec - start_post.tv_sec) + (end.tv_usec - start_post.tv_usec)/1e6);
 
     std::cout << "X:\n";
     printMatrix(n, d, x.data());
@@ -104,7 +107,8 @@ int main(int argc, char** argv) {
     std::cout << "\n" << (tri->getTriangulations().size()/d) << " Triangulations:\n";
     printMatrix(tri->getTriangulations().size()/d, d, tri->getTriangulations().data());
 
-    std::cout << "Time to compute: " << elaps << " seconds.\n";
+    std::cout << "Time to compute (with library init): " << elaps_init << " seconds.\n";
+    std::cout << "Time to compute (w/out library init): " << elaps_wout << " seconds.\n";
 
     delete tri;
 

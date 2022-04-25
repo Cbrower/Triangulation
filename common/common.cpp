@@ -405,11 +405,12 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
     *scriptyHCap = cap;
 }
 
-void lexExtendTri(double* x, std::vector<int> &delta, 
+bool lexExtendTri(double* x, std::vector<int> &delta, 
         double* scriptyH, int scriptyHLen,
         double** C, int *CLen,
         int yInd, int n, const int d) {
     // common
+    bool isInInterior = true;
     double *Cmat;
     std::vector<int> indTracker;
 
@@ -420,6 +421,17 @@ void lexExtendTri(double* x, std::vector<int> &delta,
 
     // setting values for the computation of \sigma \cap H
     cpuMatmul(x, scriptyH, Cmat, yInd+1, scriptyHLen/d, d, true, false);
+
+    for (int ih = 0; ih < scriptyHLen/d; ih++) {
+        if (Cmat[ih*(yInd + 1) + yInd] <= -TOLERANCE) {
+            isInInterior = false;
+            break;
+        }
+    }
+
+    if (isInInterior) {
+        return true;
+    }
 
     // Can be parallelized
     int oDeltaLen = delta.size()/d;
@@ -446,6 +458,7 @@ void lexExtendTri(double* x, std::vector<int> &delta,
             }
         }
     }
+    return false;
 }
 
 

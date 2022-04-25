@@ -12,7 +12,6 @@
 #endif
 
 #include "lexTriangulator.hpp"
-#include "common.hpp"
 
 const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
@@ -40,6 +39,14 @@ void LexTriangulator::computeTri() {
 #endif
     double det;
     double *lpckWspace;
+#if DO_TIMING == 1
+    double start;
+    double elaps;
+#endif
+
+#if DO_TIMING == 1
+    start = cpuSeconds();
+#endif
 
 #if USE_OPENMP == 1
     std::cout << "Using OpenMP with " << numThreads << " thread(s)!\n";
@@ -130,10 +137,38 @@ void LexTriangulator::computeTri() {
     // increment scriptyHLen to account for new data
     scriptyHLen += d*d;
 
+#if DO_TIMING == 1
+    elaps = cpuSeconds() - start;
+    std::cout << "Initialization for Lex Triangulation took " << elaps << " seconds\n";
+#endif
+    
+    bool flag;
     for (i = d; i < n; i++) {
-        extendTri(i);
-        findNewHyp(i);
+#if DO_TIMING == 1
+        start = cpuSeconds();
+#endif
+        flag = extendTri(i);
+#if DO_TIMING == 1
+        elaps = cpuSeconds() - start;
+        std::cout << "\nTiming for iteration: " << (i - d) << "\n";
+        std::cout << "extendTri: " << elaps << " seconds\n";
+#endif
+        if (!flag) {
+#if DO_TIMING == 1
+            start = cpuSeconds();
+#endif
+            findNewHyp(i);
+#if DO_TIMING == 1
+            elaps = cpuSeconds() - start;
+            std::cout << "fourierMotzkin: " << elaps << " seconds\n";
+#endif
+        } else {
+            std::cout << "Point " << i << " is in the interior!\n";
+        }
     }
+#if DO_TIMING == 1
+        start = cpuSeconds();
+#endif
 
 #if USE_CUDA == 1
     delete[] scriptyH;
@@ -171,17 +206,22 @@ void LexTriangulator::computeTri() {
     // Set lengths to zero and pointers to null pointers
     C = nullptr;
     lenC = 0;
+
+#if DO_TIMING == 1
+    elaps = cpuSeconds() - start;
+    std::cout << "Postprocessing for Lex Triangulation took " << elaps << " seconds\n";
+#endif
 }
 
-void LexTriangulator::extendTri(int yInd) {
+bool LexTriangulator::extendTri(int yInd) {
 #if USE_CUDA == 1
     cudaHandles handles;
     handles.ltHandle = ltHandle;
     handles.dnHandle = dnHandle;
-    cuLexExtendTri(handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
+    return cuLexExtendTri(handles, d_x, &d_delta, &numTris, &deltaCap, d_scriptyH, 
             scriptyHLen, workspace, workspaceLen, &C, &lenC, yInd, n, d);
 #else
-    lexExtendTri(x, delta, scriptyH, scriptyHLen, &C, &lenC, yInd, n, d);
+    return lexExtendTri(x, delta, scriptyH, scriptyHLen, &C, &lenC, yInd, n, d);
 #endif
 }
 

@@ -81,12 +81,12 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     int *hyps;
     int *sN;
     int *sP;
-    int *sL;
+    int *sZ;
     int *fmHyps;
     int maxNPts;
     int sNLen;
     int sPLen;
-    int sLLen;
+    int sZLen;
     int fmHypsLen;
     bool* bitMask;
     double *newHyps;
@@ -147,33 +147,33 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
-    // Sort hyps so that we group sP's together, sN's together, and sL's together
+    // Sort hyps so that we group sP's together, sN's together, and sZ's together
     gpuSortVecs(hyps, hType, numHyperplanes);
     // Compute the length of each vector
     sPLen = gpuFindFirst(hType, HyperplaneType::sN, numHyperplanes);
-    sNLen = gpuFindFirst(hType, HyperplaneType::sL, numHyperplanes);
+    sNLen = gpuFindFirst(hType, HyperplaneType::sZ, numHyperplanes);
     if (sNLen == -1) {
         sNLen = numHyperplanes;
     }
     sNLen -= sPLen;
-    sLLen = numHyperplanes - sNLen - sPLen;
+    sZLen = numHyperplanes - sNLen - sPLen;
 
-    assert(sPLen + sLLen + sNLen == numHyperplanes);
+    assert(sPLen + sZLen + sNLen == numHyperplanes);
 
     // Free now unneeded memory
     checkCudaStatus(cudaFree(hType), __LINE__);
 
-    // Point to the proper spots in memory for sP, sN, and sL
+    // Point to the proper spots in memory for sP, sN, and sZ
     sP = hyps;
     sN = hyps + sPLen;
-    sL = sN + sNLen;
+    sZ = sN + sNLen;
 
     if (sPLen == 0 || sNLen == 0) { // We do not need to generate candidate hyperplanes anymore
         double *nScriptyH;
 
-        assert((sPLen + sLLen) > 0); // It cannot be possible for sPLen and sLLen to be zero
+        assert((sPLen + sZLen) > 0); // It cannot be possible for sPLen and sZLen to be zero
         checkCudaStatus(cudaMalloc((void **)&nScriptyH,
-                    sizeof(double)*d*(sPLen + sLLen)), __LINE__);
+                    sizeof(double)*d*(sPLen + sZLen)), __LINE__);
 
         // Copy SP
         if (sPLen > 0) {
@@ -185,13 +185,13 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
             checkCudaStatus(cudaGetLastError(), __LINE__);
             checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
         }
-        // Copy sL
-        if (sLLen > 0) {
+        // Copy sZ
+        if (sZLen > 0) {
             block.x = iLenFM; // TODO change
             block.y = 1;
-            grid.x = (sLLen + block.x - 1)/block.x;
+            grid.x = (sZLen + block.x - 1)/block.x;
             grid.y = 1;
-            mappedCopyHyperplanes<<<grid, block>>>(nScriptyH + sPLen*d, *scriptyH, sLLen, d, sL);
+            mappedCopyHyperplanes<<<grid, block>>>(nScriptyH + sPLen*d, *scriptyH, sZLen, d, sZ);
             checkCudaStatus(cudaGetLastError(), __LINE__);
             checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
         }
@@ -200,7 +200,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
         cudaFree(hyps);
         cudaFree(*scriptyH);
         *scriptyH = nScriptyH;
-        *scriptyHLen = d*sLLen;
+        *scriptyHLen = d*sZLen;
         *scriptyHCap = *scriptyHLen;
         return;
     }
@@ -306,7 +306,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     std::cout << "MaxNPts = " << maxNPts << "\n";
     std::cout << "sPLen = " << sPLen << "\n";
     std::cout << "sNLen = " << sNLen << "\n";
-    std::cout << "sLLen = " << sLLen << "\n";
+    std::cout << "sZLen = " << sZLen << "\n";
     std::cout << "fmHypsLen = " << fmHypsLen << "\n";
     std::cout << "minMN = " << minMN << "\n";
 #endif
@@ -436,7 +436,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
 
     double *nScriptyH;
     checkCudaStatus(cudaMalloc((void **)&nScriptyH,
-                sizeof(double)*d*(fmHypsLen + sPLen + sLLen)), __LINE__);
+                sizeof(double)*d*(fmHypsLen + sPLen + sZLen)), __LINE__);
 
     // Copy sP
     block.x = iLenFM; // TODO Maybe change
@@ -447,11 +447,11 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     checkCudaStatus(cudaGetLastError(), __LINE__);
     checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
 
-    // Copy sL
-    if (sLLen > 0) {
+    // Copy sZ
+    if (sZLen > 0) {
         block.x = iLenFM; // TODO Maybe change
-        grid.x = (sLLen + block.x - 1)/block.x;
-        mappedCopyHyperplanes<<<grid, block>>>(nScriptyH + sPLen*d, *scriptyH, sLLen, d, sL);
+        grid.x = (sZLen + block.x - 1)/block.x;
+        mappedCopyHyperplanes<<<grid, block>>>(nScriptyH + sPLen*d, *scriptyH, sZLen, d, sZ);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
     }
@@ -460,7 +460,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     if (fmHypsLen > 0) {
         block.x = iLenFM; // TODO Maybe change
         grid.x = (fmHypsLen + block.x - 1)/block.x;
-        mappedCopyAndReduceHyps<<<grid, block>>>(nScriptyH + (sPLen + sLLen)*d, 
+        mappedCopyAndReduceHyps<<<grid, block>>>(nScriptyH + (sPLen + sZLen)*d, 
                 newHyps, fmHypsLen, d, fmHyps);
         checkCudaStatus(cudaGetLastError(), __LINE__);
         checkCudaStatus(cudaDeviceSynchronize(), __LINE__);
@@ -469,7 +469,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
     // Update scriptyH
     cudaFree(*scriptyH);
     *scriptyH = nScriptyH;
-    *scriptyHLen = d*(fmHypsLen + sPLen + sLLen);
+    *scriptyHLen = d*(fmHypsLen + sPLen + sZLen);
     *scriptyHCap = *scriptyHLen;
 
 #if VERBOSE == 1
@@ -529,7 +529,7 @@ __global__ void partitionHyperplanes(double *C, HyperplaneType *hType, const dou
     for (int i = idx; i < N; i += gridDim.x*blockDim.x) {
         // TODO Update to avoid warp divergence
         if (abs(C[i*m + yInd]) < tol) {
-            hType[i] = HyperplaneType::sL;
+            hType[i] = HyperplaneType::sZ;
         } else if(C[i*m + yInd] > tol) {
             hType[i] = HyperplaneType::sP;
         } else {

@@ -130,7 +130,7 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
                 const int numThreads, double *C, int CLen) {
     std::vector<int> sP;
     std::vector<int> sN;
-    std::vector<int> sL;
+    std::vector<int> sZ;
     int i;
     int j;
     int k;
@@ -193,14 +193,14 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
     printMatrix(origNumHyps, yInd + 1, C);
 #endif
 
-    // Step 2: Classify the points in the sets sL, sP, and sN per Theorem 7 of
+    // Step 2: Classify the points in the sets sZ, sP, and sN per Theorem 7 of
     // https://arxiv.org/pdf/0910.2845.pdf
 #if USE_OPENMP == 1
     #pragma omp parallel for num_threads(numThreads) private(i, j, k, lambda_i, lambda_j)
 #endif
     for (i = 0; i < origNumHyps; i++) {
         if (fabs(C[i*(yInd + 1) + yInd]) < TOLERANCE) {
-            sL.push_back(i);
+            sZ.push_back(i);
         } else if(C[i*(yInd + 1) + yInd] > TOLERANCE) {
             sP.push_back(i);
         } else {
@@ -210,8 +210,8 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
 
 #if VERBOSE == 1
     // Print out the different sets
-    std::cout << "After Step 2:\nsL:\n";
-    printMatrix(1, sL.size(), sL.data());
+    std::cout << "After Step 2:\nsZ:\n";
+    printMatrix(1, sZ.size(), sZ.data());
     std::cout << "sN:\n";
     printMatrix(1, sN.size(), sN.data());
     std::cout << "sP:\n";
@@ -220,7 +220,7 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
 #endif
 
     // Allocate enough memory for our new hyperplanes
-    cap = (sP.size() + sL.size() + sP.size()*sN.size())*d;
+    cap = (sP.size() + sZ.size() + sP.size()*sN.size())*d;
     len = 0;
     newHyps2 = new double[cap];
 
@@ -353,7 +353,7 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
 #endif
 
     
-    // Step 6: Add in the elements of sP and sL
+    // Step 6: Add in the elements of sP and sZ
 #if USE_OPENMP == 1
     #pragma omp parallel for num_threads(numThreads) private(i, j)
 #endif
@@ -367,12 +367,12 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
 #if USE_OPENMP == 1
     #pragma omp parallel for num_threads(numThreads) private(i, j)
 #endif
-    for (i = 0; i < (int)sL.size(); i++) {
+    for (i = 0; i < (int)sZ.size(); i++) {
         for (j = 0; j < d; j++) {
-            newHyps[len + i*d + j] = (*scriptyH)[sL[i]*d + j];
+            newHyps[len + i*d + j] = (*scriptyH)[sZ[i]*d + j];
         }
     }
-    len += sL.size()*d;
+    len += sZ.size()*d;
 
 
     // Step 7 Reduce them by gcd TODO Check if a self defined reduction is faster

@@ -72,7 +72,7 @@ inline void checkCusolverStatus(cusolverStatus_t status, int line) {
 enum class HyperplaneType {
     sP = 0,
     sN = 1,
-    sL = 2,
+    sZ = 2,
 };
 
 struct cudaHandles {

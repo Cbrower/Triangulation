@@ -8,6 +8,9 @@
 
 #if USE_CUDA == 1
     #include <cuda_runtime.h>
+    #include <cublas_v2.h>
+    #include <cublasLt.h>
+    #include <cusolverDn.h>
 #endif
 
 #include "lexTriangulator.hpp"
@@ -58,14 +61,21 @@ void readFile(const char* filename, std::vector<double> &x, int *d) {
 }
 
 int main(int argc, char** argv) {
+#if USE_CUDA == 1
+    cudaError_t cuStatus;
+    cublasStatus_t status;
+    cusolverStatus_t sStatus;
+    cublasLtHandle_t ltHandle;
+    cusolverDnHandle_t dnHandle;
+    cudaStream_t stream;
+#endif
     int n;
     int d;
     int numThreads;
-    double elaps_init;
-    double elaps_wout;
+    double elaps;
     char *filename;
     std::vector<double> x;
-    struct timeval start_init, start_post, end;
+    struct timeval start, end;
     LexTriangulator *tri;
 
     if (argc > 1) {
@@ -82,21 +92,52 @@ int main(int argc, char** argv) {
         numThreads = 1;
     }
 
+#if USE_CUDA == 1
+    // Allocate CUDA Handles
+    status = cublasLtCreate(&ltHandle);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        std::cerr << "cublasLt initialization failed with error: " << status << "\n";
+        return 1;
+    }
+
+    sStatus = cusolverDnCreate(&dnHandle);
+    if (sStatus != CUSOLVER_STATUS_SUCCESS) {
+        std::cerr << "cublasLt initialization failed with error: " << sStatus << "\n";
+        return 2;
+    }
+
+    cuStatus = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    if (cuStatus != cudaSuccess) {
+        std::cerr << "Cuda stream creation failed with error: " 
+                  << cudaGetErrorString(cuStatus) << "\n";
+        return 3;
+    }
+
+    sStatus = cusolverDnSetStream(dnHandle, stream);
+    if (sStatus != CUSOLVER_STATUS_SUCCESS) {
+        std::cerr << "Unable to set cuda strea for cusolver: " << sStatus << "\n";
+        return 4;
+    }
+#endif
+
     n = x.size()/d;
     std::cout << "d: " << d << ", n: " << n << "\n";
 
     // Sort for linear independence
     sortForLinIndependence(x.data(), n, d);
 
-    gettimeofday(&start_init, NULL);
+    gettimeofday(&start, NULL);
+#if USE_CUDA == 1
+    tri = new LexTriangulator(x.data(), n, d, ltHandle, dnHandle);
+#else
     tri = new LexTriangulator(x.data(), n, d);
-    gettimeofday(&start_post, NULL);
+#endif
     tri->setNumberOfThreads(numThreads);
     tri->computeTri();
     gettimeofday(&end, NULL);
 
-    elaps_init = ((end.tv_sec - start_init.tv_sec) + (end.tv_usec - start_init.tv_usec)/1e6);
-    elaps_wout = ((end.tv_sec - start_post.tv_sec) + (end.tv_usec - start_post.tv_usec)/1e6);
+    elaps = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
 
     std::cout << "X:\n";
     printMatrix(n, d, x.data());
@@ -107,12 +148,16 @@ int main(int argc, char** argv) {
     std::cout << "\n" << (tri->getTriangulations().size()/d) << " Triangulations:\n";
     printMatrix(tri->getTriangulations().size()/d, d, tri->getTriangulations().data());
 
-    std::cout << "Time to compute (with library init): " << elaps_init << " seconds.\n";
-    std::cout << "Time to compute (w/out library init): " << elaps_wout << " seconds.\n";
+    std::cout << "Time to compute: " << elaps << " seconds.\n";
 
     delete tri;
 
 #if USE_CUDA == 1
+    cublasLtDestroy(ltHandle);
+    cusolverDnDestroy(dnHandle);
+    cudaStreamDestroy(stream);
+
     cudaDeviceReset();
 #endif
+    return 0;
 }

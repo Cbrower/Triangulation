@@ -182,7 +182,7 @@ void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
     }
 
     // Allocate Matrix D
-    D = new double[(yInd + 1)*len/d]; // Please check this out
+    D = new double[(size_t)(yInd + 1)*len/d]; // Please check this out
  
     // Step 4: Conduct another matrix product.  This multiplication tells 
     // us if a point x_j is in the halfspace of a hyperplane scripyH_i.

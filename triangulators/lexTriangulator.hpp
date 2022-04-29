@@ -21,8 +21,8 @@ class LexTriangulator : public Triangulator {
             ltHandle = handle1;
             dnHandle = handle2;
 
-            cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double)*n*d);
-            cudaMemcpy(d_x, x, sizeof(double)*n*d, cudaMemcpyHostToDevice);
+            cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double)*this->n*this->d);
+            cudaMemcpy(d_x, this->x, sizeof(double)*this->n*this->d, cudaMemcpyHostToDevice);
         }
 #endif
         LexTriangulator(double* x, const int n, const int d) : Triangulator(x, n, d){
@@ -58,7 +58,10 @@ class LexTriangulator : public Triangulator {
                 cudaStreamDestroy(stream);
             }
 #endif
-            delete[] scriptyH;
+            if (scriptyH) {
+                delete[] scriptyH;
+            }
+            delete[] x;
         }
         void computeTri() override;
     protected:

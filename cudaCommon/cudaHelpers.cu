@@ -39,7 +39,7 @@ __global__ void mappedCopyHyperplanes(T *output, const T *input, const int N, co
     for (int idx = tid; idx < N; idx += gridDim.x * blockDim.x) {
         mappedIdx = map[idx];
         for (int i = 0; i < d; i++) {
-            output[idx*d + i] = input[mappedIdx*d + i];
+            output[(size_t)idx*d + i] = input[(size_t)mappedIdx*d + i];
         }
     }
 }
@@ -131,7 +131,7 @@ void cuFourierMotzkin(cudaHandles handles, double* x, double** scriptyH,
         std::cout << "C:\n";
         for (int i = 0; i < numHyperplanes; i++) {
             for (int j = 0; j < yInd + 1; j++) {
-                std::cout << buf[i*(yInd + 1) + j] << " ";
+                std::cout << buf[(size_t)i*(yInd + 1) + j] << " ";
             }
             std::cout << "\n";
         }
@@ -509,14 +509,14 @@ __global__ void computeHyperplanes1(double* C, double* scriptyH, int* sP, int* s
     double lambda_j;
 
     if (i < sPLen && j < sNLen) {
-        lambda_i = C[(yInd + 1)*sP[i] + yInd];
-        lambda_j = C[(yInd + 1)*sN[j] + yInd]; // TODO Check this isn't a bug
+        lambda_i = C[(size_t)(yInd + 1)*sP[i] + yInd];
+        lambda_j = C[(size_t)(yInd + 1)*sN[j] + yInd]; // TODO Check this isn't a bug
 
         int tmpLen = i*d*sNLen;
 
         for (k = 0; k < d; k++) {
-            newHyp[tmpLen + j*d + k] = lambda_i * scriptyH[sN[j]*d + k] - 
-                                        lambda_j * scriptyH[sP[i]*d + k];
+            newHyp[tmpLen + j*d + k] = lambda_i * scriptyH[(size_t)sN[j]*d + k] - 
+                                        lambda_j * scriptyH[(size_t)sP[i]*d + k];
         }
     }
 }
@@ -548,7 +548,7 @@ __global__ void countNumIntersects(double* D, int* numPts, bool* mask, const int
     for (i = tid; i < N; i += gridDim.x*blockDim.x) {
         count = 0;
         for (j = 0; j < nPts; j++) {
-            count += (int)(abs(D[i*nPts + j]) < tol);
+            count += (int)(abs(D[(size_t)i*nPts + j]) < tol);
         }
         numPts[i] = count;
         mask[i] = count < (d - 1);
@@ -576,7 +576,7 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
 
     // Part 1 Place the indices into the inds array
     for (i = 0; i < nPts; i++) {
-        val = (int)(abs(D[fmHyps[idx + offset]*nPts + i]) < tol);
+        val = (int)(abs(D[(size_t)fmHyps[idx + offset]*nPts + i]) < tol);
         inds[counter*stride + threadIdx.x] = i*val; // Could also try "idx*stride + counter"
         counter += val;
     }
@@ -590,15 +590,15 @@ __global__ void loadHypData(double *workspace, const double* x, const double* D,
     if (trans) {
         for (i = 0; i < d; i++) {
             for (j = 0; j < maxNPts; j++) {
-                workspace[idx*maxNPts*d + i*maxNPts + j] = (int)(j < counter) *
-                    x[inds[j*stride + threadIdx.x]*d + i];
+                workspace[(size_t)idx*maxNPts*d + i*maxNPts + j] = (int)(j < counter) *
+                    x[(size_t)inds[j*stride + threadIdx.x]*d + i];
             }
         }
     } else {
         for (i = 0; i < maxNPts; i++)  {
             for (j = 0; j < d; j++) {
-                workspace[(idx*maxNPts + i)*d + j] = (int)(i < counter) * 
-                    x[inds[i*stride + threadIdx.x]*d + j];
+                workspace[((size_t)idx*maxNPts + i)*d + j] = (int)(i < counter) * 
+                    x[(size_t)inds[i*stride + threadIdx.x]*d + j];
             }
         }
     }
@@ -616,10 +616,10 @@ __global__ void checkSingularVals(const int* info, const double* S, bool* mask,
 
     cnt = 0;
     for (int i = 0; i < minMN; i++) {
-        cnt += (int)(abs(S[tid*minMN + i]) >= tol);
+        cnt += (int)(abs(S[(size_t)tid*minMN + i]) >= tol);
     }
     
-    mask[tid + offset] = cnt < (d - 1);
+    mask[(size_t)tid + offset] = cnt < (d - 1);
 }
 
 // TODO Speedup with faster gcd algorithm
@@ -642,10 +642,10 @@ __global__ void mappedCopyAndReduceHyps(double *output, const double *input, con
     if (tid < N) {
         idx = map[tid];
         for (int i = 0; i < d; i++) {
-            listGCD = gpuGCD(listGCD, abs(round(input[idx*d + i])));
+            listGCD = gpuGCD(listGCD, abs(round(input[(size_t)idx*d + i])));
         }
         for (int i = 0; i < d; i++) {
-            output[tid*d + i] = round(input[idx*d + i])/listGCD;
+            output[tid*d + i] = round(input[(size_t)idx*d + i])/listGCD;
         }
     }
 }
@@ -850,7 +850,7 @@ __global__ void findScriptyHLessThanY(bool* bitMask, const double* C,
     const int tid = blockDim.x * blockIdx.x + threadIdx.x;
     
     for (int idx = tid; idx < numRows; idx += gridDim.x*blockDim.x) {
-        bitMask[idx] = C[idx*numCols + yInd] > -tol;
+        bitMask[idx] = C[(size_t)idx*numCols + yInd] > -tol;
     }
 }
 
@@ -867,11 +867,11 @@ __global__ void findNewTris(int* nDeltas, bool *bitMask, const int* validHyps,
     // TODO Write design decisions and why and quantitive info.
     for (int ih = tid_x; ih < lenValidHyps; ih += gridDim.x*blockDim.x) {
         for (int id = tid_y; id < numTris; id += gridDim.y*blockDim.y) {
-            offset = ih*d*numTris + id*d;
+            offset = (size_t)ih*d*numTris + id*d;
             cnt = 0;
             for (int is = 0; is < d; is++) {
                 deltaIdx = delta[id*d + is];
-                val = (fabs(C[validHyps[ih]*numCols + deltaIdx]) < tol);
+                val = (fabs(C[(size_t)validHyps[ih]*numCols + deltaIdx]) < tol);
                 nDeltas[offset + cnt] = deltaIdx; // TODO Something is wrong here
                 cnt += val;
             }

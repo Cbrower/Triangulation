@@ -64,6 +64,10 @@ class Triangulator {
             projectDown(x_full, &this->x, colPivs, n, d);
             this->d = colPivs.size();
             assert(rank == this->d);
+
+#if VERBOSE == 1
+            std::cout << "Projected to a " << rank << " dimensional cone\n";
+#endif
         }
         bool computedTri {false};
         double* x;

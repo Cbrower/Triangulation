@@ -97,13 +97,13 @@ void LexTriangulator::computeTri() {
         int listGCD = 0;
 
         for (j = 0; j < d; j++) {
-            scriptyH[i*d + j] *= det;
+            scriptyH[i*d + j] *= std::abs(det);
         }
 
         // Conducting a GCD Reduction TODO Enable or disable this
         for (j = 0; j < d; j++) {
             scriptyH[i*d + j] = round(scriptyH[i*d + j]);
-            listGCD = gcd(listGCD, abs(scriptyH[i*d + j]));
+            listGCD = gcd(listGCD, std::abs(scriptyH[i*d + j]));
         }
 
         for (j = 0; j < d; j++) {

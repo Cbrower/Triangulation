@@ -71,6 +71,8 @@ int main(int argc, char** argv) {
 #endif
     int n;
     int d;
+    int d_proj;
+    int numSimps;
     int numThreads;
     double elaps;
     char *filename;
@@ -124,9 +126,6 @@ int main(int argc, char** argv) {
     n = x.size()/d;
     std::cout << "d: " << d << ", n: " << n << "\n";
 
-    // Sort for linear independence
-    sortForLinIndependence(x.data(), n, d);
-
     gettimeofday(&start, NULL);
 #if USE_CUDA == 1
     tri = new LexTriangulator(x.data(), n, d, ltHandle, dnHandle);
@@ -139,14 +138,21 @@ int main(int argc, char** argv) {
 
     elaps = ((end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6);
 
+    d_proj = tri->getProjectedDimension();
+    numSimps = tri->getNumSimplices();
+
     std::cout << "X:\n";
-    printMatrix(n, d, x.data());
+    printMatrix(n, d, tri->getGenerators());
 
     std::cout << "\n" << tri->getNumSupHyperplanes() << " support hyperplanes:\n";
     printMatrix(tri->getNumSupHyperplanes(), d, tri->getSupportingHyperplanes());
 
-    std::cout << "\n" << (tri->getTriangulations().size()/d) << " Triangulations:\n";
-    printMatrix(tri->getTriangulations().size()/d, d, tri->getTriangulations().data());
+    if (numSimps == 1) {
+        std::cout << "\nOne simplex:\n";
+    } else {
+        std::cout << "\n" << numSimps << " simplices:\n";
+    }
+    printMatrix(numSimps, d_proj, tri->getSimplices().data());
 
     std::cout << "Time to compute: " << elaps << " seconds.\n";
 

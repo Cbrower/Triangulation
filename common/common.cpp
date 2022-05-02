@@ -1,6 +1,5 @@
 #include <exception>
 #include <iostream>
-#include <limits>
 #include <math.h>
 
 #include "common.hpp"
@@ -10,11 +9,11 @@ extern "C" {
     void dgesvd_(char* jobu, char* jobvt, int* m, int* n, double* A, int* lda, double* S, 
                     double* U, int* ldu, double* VT, int* ldvt, double* work, int* lwork,
                     int* info);
+
+    void dgeqp3_(int* m, int* n, double* A, int* lda, int* jpvt, double* tau, double* work, int* lwork, int* info);
 }
 
 int gcd(int a, int b);
-
-const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
 void sortForL1Norm(double* X, const int m, const int n) {
     int i;
@@ -48,6 +47,108 @@ void sortForL1Norm(double* X, const int m, const int n) {
     */
 
     delete[] norms;
+}
+
+void projectDown(const double* A, std::vector<int> &colPivs, const int m, const int n, const double tol) {
+    double* ACopy = new double[m*n];
+    int minMN = std::min(m, n);
+    int m1 = m;
+    int n1 = n;
+    int lda = m;
+    int *jpvt = new int[n];
+    double *tau = new double[minMN];
+    int lwork = 3*n + 1;
+    double *work = new double[lwork];
+    int info;
+    int rank;
+
+    for (int i = 0; i < n; i++) {
+        jpvt[i] = 0; // Allowing the column to be free
+    }
+
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            ACopy[j*m + i] = A[i*n + j];
+        }
+    }
+    
+    dgeqp3_(&m1, &n1, ACopy, &lda, jpvt, tau, work, &lwork, &info);
+    if (info != 0) {
+        std::cerr << "dgeqp3_ returned " << info << "\n";
+        throw new std::runtime_error("");
+    }
+
+    // Mapping indices from one indexed to zero indexed
+    for (int i = 0; i < n; i++) {
+        jpvt[i] -= 1;
+    }
+
+    rank = 0;
+    for (int i = 0; i < minMN; i++) {
+        if (std::abs(ACopy[i*m + i]) < tol) {
+            break;
+        }
+        rank += 1;
+    }
+
+    // Have columns be in order
+    std::sort(jpvt, jpvt + rank);
+
+    colPivs.clear();
+    for (int i = 0; i < rank; i++) {
+        colPivs.push_back(jpvt[i]);
+    }
+
+    delete[] ACopy;
+    delete[] jpvt;
+    delete[] tau;
+    delete[] work;
+}
+
+void projectDownAndSort(double *A, double **B, std::vector<int> rowPivs, std::vector<int> &colPivs, const int m, const int n, const double tol) {
+    double *AColProj;
+    double *Bptr;
+    double tmp;
+
+    projectDown(A, colPivs, m, n, tol);
+
+    AColProj = new double[m*colPivs.size()];
+    // Project out columns and store it transposed.
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; (size_t)j < colPivs.size(); j++) {
+            AColProj[j*m + i] = A[i*n + colPivs[j]];
+        }
+    }
+
+    projectDown(AColProj, rowPivs, colPivs.size(), m, tol);
+    assert(colPivs.size() == rowPivs.size());
+
+    Bptr = new double[m*colPivs.size()];
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; (size_t)j < colPivs.size(); j++) {
+            Bptr[i*colPivs.size() + j] = AColProj[j*m + i];
+        }
+    }
+
+    delete[] AColProj;
+
+    for (int i = 0; (size_t)i < rowPivs.size(); i++) {
+        if (i == rowPivs[i]) {
+            continue;
+        }
+        for (int j = 0; j < n; j++) {
+            if ((size_t)j < colPivs.size()) {
+                tmp = Bptr[i*colPivs.size() + j];
+                Bptr[i*colPivs.size() + j] = Bptr[rowPivs[i]*colPivs.size() + j];
+                Bptr[rowPivs[i]*colPivs.size() + j] = tmp;
+            }
+            tmp = A[i*n + j];
+            A[i*n + j] = A[rowPivs[i]*n + j];
+            A[rowPivs[i]*n + j] = tmp;
+        }
+    }
+
+    *B = Bptr;
 }
 
 void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,

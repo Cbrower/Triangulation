@@ -11,7 +11,6 @@
 #endif
 #include <assert.h>
 
-#include "common.hpp"
 #include "triangulator.hpp"
 
 class LexTriangulator : public Triangulator {

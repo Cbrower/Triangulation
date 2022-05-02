@@ -2,11 +2,16 @@
 #define _COMMON_HPP
 
 #include <algorithm>
+#include <limits>
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <vector>
+#include <iterator>
 #include <assert.h>
 #include <sys/time.h>
+
+const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
 
 extern "C" {
     void dgemm_(char* transA, char* transB, int* m, int* n, int* k, double* alpha, double* A, int* lda, double* B, int* ldb, double* beta, double* C, int* ldc);
@@ -43,6 +48,11 @@ int cpuSingularValues(T *A, T *S, int m, int n, T *work, int lwork);
 
 void sortForL1Norm(double* X, const int m, const int n);
 
+void projectDown(const double* A, std::vector<int> &colPivs, const int m, const int n, const double tol=TOLERANCE);
+
+// Reorder A and project out columns, storing the result in B
+void projectDownAndSort(double *A, double **B, std::vector<int> rowPivs, std::vector<int> &colPivs, const int m, const int n, const double tol=TOLERANCE);
+
 // subject to change arguments
 void fourierMotzkin(double* x, double** scriptyH, int* scriptyHLen,
                 int* scriptyHCap, const int yInd, const int n, const int d, 
@@ -53,63 +63,6 @@ bool lexExtendTri(double* x, std::vector<int> &delta,
         double* scriptyH, int scriptyHLen,
         double** C, int* lenC, int yInd, 
         int n, int d);
-
-template<typename T>
-int sortForLinIndependence(T* A, const int m, const int n, const T tol=1e-8) {
-    T* Acopy = new T[m*n];
-    T tmp;
-    int minMN = std::min(m, n);
-    int mT = m;
-    int nT = n;
-    int lda = m;
-    int info;
-    int *ipiv;
-    int rank = 0;
-
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) {
-            Acopy[j*m + i] = A[i*n + j];
-        }
-    }
-
-    ipiv = new int[minMN];
-
-    dgetrf_(&mT, &nT, Acopy, &lda, ipiv, &info);
-    assert(info >= 0); // Error code > 0 implies not full rank
-
-    // Find the rank of the matrix
-    int cnt;
-    for (int i = 0; i < m; i++) {
-        cnt = i;
-        for (int j = i; j < n; j++) {
-            if (std::abs(Acopy[j*m + i]) < tol) {
-                cnt += 1;
-            }
-        }
-        if (cnt == n) {
-            break;
-        }
-        rank += 1;
-    }
-
-    // Conduct the swap
-    for (int i = 0; i < minMN; i++) {
-        ipiv[i] -= 1;
-        if (i == ipiv[i] || ipiv[i] > m || ipiv[i] < 0) {
-            continue;
-        }
-        for (int j = 0; j < n; j++) {
-            tmp = A[i*n + j];
-            A[i*n + j] = A[ipiv[i]*n + j];
-            A[ipiv[i]*n + j] = tmp;
-        }
-    }
-
-    delete[] Acopy;
-    delete[] ipiv;
-
-    return rank;
-}
 
 template<typename T>
 void lexSort(T* x, const int n, const int d) {
@@ -130,62 +83,6 @@ void lexSort(T* x, const int n, const int d) {
     }
 }
 
-template<typename T>
-void projectDown(const T* A, T** B, std::vector<int> &colPivs, const int m, const int n, T tol=1e-8) {
-    T* Acopy = new T[m*n];
-    T* Bptr;
-    int i;
-    int j;
-    int mT = m;
-    int nT = n;
-    int lda = m;
-    int info;
-    int *ipiv = new int[std::min(m, n)];
-
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) {
-            Acopy[j*m + i] = A[i*n + j];
-        }
-    }
-
-    if constexpr (std::is_same<T, double>::value) {
-        dgetrf_(&mT, &nT, Acopy, &lda, ipiv, &info);
-    } else if constexpr (std::is_same<T, float>::value) {
-        sgetrf_(&mT, &nT, Acopy, &lda, ipiv, &info);
-    } else {
-        throw std::logic_error("Invalid template argument to projectDown");
-    }
-    assert(info >= 0); // Error code > 0 implies not full rank
-
-    delete[] ipiv;
-
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < std::min(i, n); j++) {
-            Acopy[j*m + i] = (T)0;
-        }
-    }
-
-    i = 0;
-    for (j = 0; j < n; j++) {
-        if (std::abs(Acopy[j*m + i]) > tol) {
-            colPivs.push_back(j);
-            i += 1;
-            if (i >= m) {
-                break;
-            }
-        }
-    }
-    delete[] Acopy;
-
-    Bptr = new T[m*colPivs.size()];
-    for (i = 0; i < m; i++) {
-        for (j = 0; (size_t)j < colPivs.size(); j++) {
-            Bptr[i*colPivs.size() + j] = A[i*n + colPivs[j]];
-        }
-    }
-
-    *B = Bptr;
-}
 
 template<typename T>
 void projectUp(const T* B, T** A, std::vector<int> &colPivs, const int m, const int n) {

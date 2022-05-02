@@ -13,8 +13,6 @@
 
 #include "lexTriangulator.hpp"
 
-const double TOLERANCE = sqrt(std::numeric_limits<double>::epsilon());
-
 extern "C" {
     // LU decomoposition of a general matrix
     void dgetrf_(int* m, int *n, double* A, int* lda, int* ipiv, int* info);
@@ -76,6 +74,7 @@ void LexTriangulator::computeTri() {
 
     dgetrf_(&d, &d, scriptyH, &d, piv, &error);
     if (error != 0) {
+        std::cerr << "dgetrf returned " << error << "\n";
         throw std::runtime_error("Error in dgetrf");
     }
 

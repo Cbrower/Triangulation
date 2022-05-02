@@ -14,7 +14,6 @@
 #endif
 
 #include "lexTriangulator.hpp"
-#include "common.hpp"
 
 void readFile(const char* filename, std::vector<double> &x, int *d) {
     int fcount; // first count

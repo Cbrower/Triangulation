@@ -4,6 +4,8 @@
 #include <vector>
 #include <exception>
 
+#include "common.hpp"
+
 class Triangulator { 
     public:
         std::vector<int> getSimplices() {
@@ -52,18 +54,13 @@ class Triangulator {
 
     protected:
         Triangulator(double* x, const int n, const int d) {
-            int rank;
             this->x_full = x;
             this->n = n;
             this->d_full = d;
 
-            // First, ensure our first <rank> number of rows are linearly independent
-            rank = sortForLinIndependence(x, n, d);
-
-            // Next, project down
-            projectDown(x_full, &this->x, colPivs, n, d);
+            // Project down and sort for linear independence
+            projectDownAndSort(this->x_full, &this->x, rowPivs, colPivs, n, d);
             this->d = colPivs.size();
-            assert(rank == this->d);
 
 #if VERBOSE == 1
             std::cout << "Projected to a " << rank << " dimensional cone\n";
@@ -73,6 +70,7 @@ class Triangulator {
         double* x;
         double* x_full;
         double* scriptyH {nullptr};
+        std::vector<int> rowPivs;
         std::vector<int> colPivs;
         std::vector<int> delta; 
         int n;

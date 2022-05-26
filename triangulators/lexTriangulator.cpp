@@ -163,6 +163,11 @@ void LexTriangulator::computeTri() {
             std::cout << "fourierMotzkin: " << elaps << " seconds\n";
 #endif
         } else {
+#if USE_CUDA == 1
+            cudaFree(C);
+#else
+            delete[] C;
+#endif
             std::cout << "Point " << i << " is in the interior!\n";
         }
     }
